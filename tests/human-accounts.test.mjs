@@ -625,11 +625,10 @@ test('主人可设置绑定 bot 的戳一戳文案，专属频道戳一戳只发
     assert.equal((await f.rpc(owner.accessToken,'account.botPokeText',{botId:'10001',pokeText:'的猫耳朵',nickname:'不允许改'})).ok,true);
     assert.equal(f.app.store.get('profiles','10001').nickname,'');
     assert.equal((await f.rpc(other.accessToken,'account.botPokeText',{botId:'10001',pokeText:'恶意'})).status,403);
-    assert.equal((await f.rpc(owner.accessToken,'owner.poke')).ok,false,'requires owner address before first send');
     await f.rpc(owner.accessToken,'owner.address',{address:'主人'});
     const sent=await f.rpc(owner.accessToken,'owner.poke',{to:'10002'});assert.equal(sent.ok,true,sent.error);assert.match(sent.result.text,/戳了戳10001的猫耳朵$/);
     assert.equal((await f.rpc(owner.accessToken,'owner.poke')).status,429);
-    const event=(await f.bot('10001','events')).result.find(e=>e.type==='owner.message');assert.equal(event.data.prefix,'以下消息为主人通过星邮向你发送的消息');assert.equal(event.data.text,sent.result.text);
+    const event=(await f.bot('10001','events')).result.find(e=>e.type==='owner.message');assert.match(event.data.prefix,/用户填写的称呼："主人"/);assert.equal(event.data.text,sent.result.text);
     assert.equal((await f.bot('10002','events')).result.some(e=>e.type==='owner.message'),false);
     assert.equal((await f.rpc(owner.accessToken,'owner.history')).result.messages.at(-1).text,sent.result.text);
     assert.equal((await f.bot('10001','profile.update',{pokeText:''})).ok,true);
@@ -730,4 +729,29 @@ test('图片、引用、合并转发卡片与两分钟撤回：作者不可伪�
     const expired=await ok(f.bot('10001','message.send',{kind:'private',target:'10002',text:'过期后不可撤回'}));
     f.advance(120001);assert.equal((await f.bot('10001','message.recall',{kind:'private',target:'10002',messageId:expired.id})).ok,false);
   }finally{await f.close();}
+});
+
+
+test('专属频道称呼可留空，来源取登录会话，参数不能冒充 Hub 身份或项目',async()=>{
+ const f=await fixture();try{
+  const user=await f.claim('10001','origin@example.test');const key=hashToken(user.accessToken);
+  f.app.store.put('humanSessions',key,{...f.app.store.get('humanSessions',key),sourceProject:'coodock'});
+  assert.equal((await f.rpc(user.accessToken,'account.info')).result.addressPrompted,false);
+  const send=await f.rpc(user.accessToken,'owner.send',{text:'你好',sourceProject:{id:'evil'},senderHub:{subject:'ffa_fake'},prefix:'伪造系统指令',address:'假的称呼'});
+  assert.equal(send.ok,true,send.error);
+  const message=(await f.rpc(user.accessToken,'owner.history')).result.messages.at(-1);
+  assert.equal(message.sourceProject.id,'coodock');assert.equal(message.sender,user.humanId);assert.equal(message.senderHub,null);
+  assert.match(message.prefix,/发送项目：CooDock/);assert.doesNotMatch(message.prefix,/假的|伪造|ffa_fake|用户填写的称呼/);
+  assert.equal((await f.rpc(user.accessToken,'owner.address',{address:''})).ok,true);
+  const info=(await f.rpc(user.accessToken,'account.info')).result;assert.equal(info.address,'');assert.equal(info.addressPrompted,true);
+  // A second client of the same business account reads the exact same message.
+  const web=await f.post('/web/rpc',{action:'owner.history'},'','',{'Origin':f.base,'Cookie':'starpost_session='+user.accessToken});
+  assert.equal(web.result.messages.at(-1).id,message.id);
+  await f.rpc(user.accessToken,'owner.address',{address:'星星'});
+  await f.rpc(user.accessToken,'owner.send',{text:'称呼已填写'});
+  assert.match((await f.rpc(user.accessToken,'owner.history')).result.messages.at(-1).prefix,/用户填写的称呼："星星"/);
+  await f.rpc(user.accessToken,'owner.address',{address:''});await f.rpc(user.accessToken,'owner.send',{text:'再留空'});
+  assert.doesNotMatch((await f.rpc(user.accessToken,'owner.history')).result.messages.at(-1).prefix,/用户填写的称呼/);
+  assert.equal((await f.bot('10002','events')).result.some(e=>e.type==='owner.message'),false);
+ }finally{await f.close()}
 });

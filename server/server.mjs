@@ -1,3 +1,4 @@
+import { ownerIdentity } from './owner-origin.mjs';
 import { audioPayload } from './audio.mjs';
 import { enqueueChatNotice } from './chat-notices.mjs';
 import { GamePrivacy, gamePrivacy } from './game-privacy.mjs';
@@ -981,7 +982,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
           if (req.headers['x-starpost-account'] && req.headers['x-starpost-account'] !== (session.human ? session.owner : session.humanId)) fail('账号已在其他页面切换，请重新打开星邮', 401);
           const hubState = hubBridge && input.action !== 'logout' ? await hubBridge.sessionCheck(session, false, input.action, input.args ?? {}) : null;
           if (req.headers['x-ffa-subject'] && req.headers['x-ffa-subject'] !== hubState?.subject) fail('Hub 身份已变更，请重新登录', 401);
-          result = store.transaction(() => access.call(session, input.action, privacy.decode(input.args ?? {},input.action)));
+          result = store.transaction(() => access.call({ ...session, ownerIdentity: ownerIdentity(session, hubState, hubConfig?.issuer) }, input.action, privacy.decode(input.args ?? {},input.action)));
           if (hubState && input.action === 'account.info') result = hubBridge.accountInfo(result, hubState);
           if (hubState && input.action === 'owner.notifications') result = hubBridge.filterNotifications(result, hubState);
           if (hubBridge && input.action === 'account.bind') result = await hubBridge.syncBinding(session, result);
@@ -1020,7 +1021,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         const hubState = hubBridge && req.url === '/mobile/rpc' && input.action !== 'logout' ? await hubBridge.sessionCheck(access.authenticate(req.headers.authorization), false, input.action, input.args ?? {}) : null;
         let result = store.transaction(() => req.url === '/mobile/login'
           ? access.signIn(input, remote)
-          : access.call(access.authenticate(req.headers.authorization), input.action, privacy.decode(input.args ?? {},input.action)));
+          : access.call({ ...access.authenticate(req.headers.authorization), ownerIdentity: ownerIdentity(access.authenticate(req.headers.authorization), hubState, hubConfig?.issuer) }, input.action, privacy.decode(input.args ?? {},input.action)));
         if (hubState && input.action === 'account.info') result = hubBridge.accountInfo(result, hubState);
         if (hubBridge && req.url === '/mobile/login') { await hubBridge.sync(); await hubBridge.sessionCheck(access.authenticate(`Bearer ${result.accessToken}`), true); }
         if (hubBridge && req.url === '/mobile/rpc' && input.action === 'account.bind') result = await hubBridge.syncBinding(access.authenticate(req.headers.authorization), result);

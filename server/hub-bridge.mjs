@@ -1,3 +1,4 @@
+import { ownerProject } from './owner-origin.mjs';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import http from 'node:http';
 const fail = (message, status = 403) => { throw Object.assign(new Error(message), { status }); };
@@ -39,6 +40,7 @@ export class HubBridge {
       if (bot) { const membership = state.botAccess?.find(row => row.external_id === bot); if (!membership || (/^teen\./.test(action) || /^account\.bot/.test(action)) && membership.role === 'member') fail('此 bot 的 Hub 管理关系已变更，请先在 FFA hub 确认权限或重新绑定', 403); }
     }
     if (fresh) { const collection = session.human ? 'humanSessions' : 'mobileSessions'; this.store.transaction(() => this.store.put(collection, session.key, { ...this.store.get(collection, session.key), hubSubject: state.subject, hubEpoch: state.epoch, hubServiceEpoch: state.serviceEpoch })); }
+    if (session.sourceProject === 'coodock') { const project = await this.request('/v1/starpost/project-state', { subject: state.subject, project: 'coodock' }); if (!project.linked || project.epoch !== session.sourceProjectEpoch) fail('CooDock 的 Hub 授权已撤销，请重新登录', 401); }
     return state;
   }
   filterNotifications(result, state) { return { ...result, items: (result.items ?? []).filter(item => { const bot = item.botId ?? (item.kind === 'owner' ? item.target : null); return !bot || state.botAccess?.some(row => row.external_id === bot); }) }; }
@@ -102,6 +104,8 @@ export class HubBridge {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify({ ok: true, result }));
   }
   async signInIdentity(input) {
+      const sourceProject = ownerProject(input.sourceProject).id;
+      if (sourceProject === 'coodock') { const state = await this.request('/v1/starpost/project-state', { subject: input.subject, project: sourceProject }); if (!state.linked || state.epoch !== input.sourceProjectEpoch) fail('CooDock 的 Hub 授权已变更，请重新登录', 401); }
       const allowed = await this.request('/v1/links', { subject: input.subject });
       if (allowed.kind && allowed.kind !== 'human') fail('需要 FFA 人类账号授权');
       let externalId = input.externalId;
@@ -124,7 +128,7 @@ export class HubBridge {
         this.store.put('people', person.humanId, { ...person, hubSubject: input.subject, hubPending: false, email: allowed.profile.email || person.email });
         if (!this.store.get('hubOriginalMappings', externalId)) this.store.put('hubOriginalMappings', externalId, { subject: input.subject, epoch: allowed.epoch });
         const out = this.accounts.issue(externalId), key = createHash('sha256').update(out.accessToken).digest('hex'), row = this.store.get('humanSessions', key);
-        this.store.put('humanSessions', key, { ...row, hubSubject: input.subject, hubEpoch: allowed.epoch, hubServiceEpoch: allowed.serviceEpoch }); return { ...out, hubSubject: input.subject, hubIssuer: this.config.issuer, loginProvider: 'ffa-hub' };
+        this.store.put('humanSessions', key, { ...row, sourceProject, sourceProjectEpoch: sourceProject === 'coodock' ? input.sourceProjectEpoch : undefined, hubSubject: input.subject, hubEpoch: allowed.epoch, hubServiceEpoch: allowed.serviceEpoch }); return { ...out, hubSubject: input.subject, hubIssuer: this.config.issuer, loginProvider: 'ffa-hub' };
       });
   }
 }

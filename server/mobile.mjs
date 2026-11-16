@@ -1,3 +1,4 @@
+import { ownerPrefix } from './owner-origin.mjs';
 import { audioPayload } from './audio.mjs';
 import { presentGamePage } from './game-presentation.mjs';
 import { enqueueChatNotice } from './chat-notices.mjs';
@@ -27,7 +28,7 @@ export class MobileAccess {
     for (const session of sessions.slice(0, Math.max(0, sessions.length - 4))) this.store.remove('mobileSessions', session.key);
     const key = digest(token);
     this.store.put('mobileSessions', key, { key, owner: identity.botId, expiresAt, credentialHash: this.fingerprint(identity.botId), at: new Date(now).toISOString() });
-    return { botId: identity.botId, accessToken: token, expiresAt, address: this.store.get('mobileProfile', identity.botId)?.address ?? '' };
+    return { botId: identity.botId, accessToken: token, expiresAt, ...this.ownerProfile(identity.botId) };
   }
   authenticate(header) {
     const token = header?.replace(/^Bearer /, '');
@@ -44,20 +45,26 @@ export class MobileAccess {
     const page = rows.slice(0, 8).reverse();
     return { messages: page.map(row => ({ ...this.messageActions.view(JSON.parse(row.data)), cursor: row.rowid })), nextBefore: rows.length > 8 ? page[0].rowid : null };
   }
-  send(who, direction, args) {
+  ownerProfile(who) {
+    const human = this.messageActions.owner(who);
+    const profile = this.store.get('ownerProfiles', `${human}:${who}`);
+    if (profile) return { address: profile.address, addressPrompted: true };
+    const address = this.store.get('mobileProfile', who)?.address ?? '';
+    return { address, addressPrompted: Boolean(address) };
+  }
+  send(who, direction, args, identity) {
     if (this.humanActive(who)) fail('人类参赛期间，人机私聊不可用', 423);
     const text = short(args?.text ?? '', 3000), image = this.image(args?.image), audio=audioPayload(args?.audio);
     if(audio&&(image||args.forward))fail('语音不能与图片或合并记录同时发送');
     const actor=direction==='bot'?who:this.messageActions.owner(who);
     const content=this.messageActions.prepare(actor,'owner',who,args);
     if (!text && !image && !audio && !content.forward) fail('不能发送空消息');
-    const address = this.store.get('mobileProfile', who)?.address;
-    if (direction === 'human' && !address) fail('首次发送前请填写桌宠对你的称呼');
+    const { address } = this.ownerProfile(who);
     const recent = this.store.count('ownerMessages', 'owner=? AND kind=? AND at>?', [who, direction, new Date(this.clock() - 60000).toISOString()]);
     if (recent >= 12) fail('人机频道每分钟最多发送 12 条', 429);
-    const prefix = direction === 'human' ? `以下消息为${address}通过星邮向你发送的消息` : '';
+    const prefix = direction === 'human' ? ownerPrefix(identity, address, actor) : '';
     const message = { id: randomUUID(), botId: who, direction, sender:actor, senderNickname:this.messageActions.profile(actor)?.nickname??'', address: address ?? '', text,
-      prefix, image, audio, ...content, at: new Date(this.clock()).toISOString() };
+      prefix, ...(direction === 'human' ? { senderHub: identity?.hub ?? null, sourceProject: identity?.project ?? { id: 'starpost', name: '星邮' } } : {}), image, audio, ...content, at: new Date(this.clock()).toISOString() };
     const saved = this.store.put('ownerMessages', message.id, message);
     this.onMessage(actor,message.at);
     if (direction === 'human') this.store.emit([who], 'owner.message', this.messageActions.view(saved), message.at);
@@ -105,7 +112,7 @@ export class MobileAccess {
       case 'teen.removeFriend': return this.ownerControl(who,'removeFriend',args);
       case 'overview': {
         const value = this.snapshot(who, true);
-        return { ...value, ownerAddress: this.store.get('mobileProfile', who)?.address ?? '', posts: value.posts.map(post => ({ id: post.id, author: post.author, text: post.text.slice(0, 160), image: Boolean(post.image), at: post.at })) };
+        return { ...value, ownerAddress: this.ownerProfile(who).address, posts: value.posts.map(post => ({ id: post.id, author: post.author, text: post.text.slice(0, 160), image: Boolean(post.image), at: post.at })) };
       }
       case 'history': {
         const page = this.history(who, args), messages = page.messages.slice(-8);
@@ -140,9 +147,9 @@ export class MobileAccess {
         return this.historySearch[action.endsWith('.search')?'search':'context'](who,input);
       }
       case 'owner.address': {
-        const address = short(args.address, 32);
-        if (!/^[\p{L}\p{N}\p{M} _.-]{1,32}$/u.test(address)) fail('称呼须为 1–32 个字母、汉字、数字、空格或 _.-');
-        this.store.put('mobileProfile', who, { address }); return { address };
+        const address = short(args.address ?? '', 32);
+        if (!/^[\p{L}\p{N}\p{M} _.-]{0,32}$/u.test(address)) fail('称呼可留空，最多 32 个字母、汉字、数字、空格或 _.-');
+        this.store.put('ownerProfiles', `${this.messageActions.owner(who)}:${who}`, { address }); return { address, addressPrompted: true };
       }
       case 'message.read': return this.messageActions.read(who,args);
       case 'message.image': return this.messageActions.image(who,args);
@@ -150,7 +157,7 @@ export class MobileAccess {
       case 'owner.audio': return this.messageActions.audio(this.messageActions.owner(who),{...args,kind:'owner',target:who});
       case 'owner.recall': return this.messageActions.recall(this.messageActions.owner(who),{kind:'owner',target:who,messageId:args.messageId});
       case 'owner.read': return this.messageActions.read(this.messageActions.owner(who),{kind:'owner',target:who,messageId:args.messageId});
-      case 'owner.send': return this.send(who, 'human', args);
+      case 'owner.send': return this.send(who, 'human', args, session.ownerIdentity);
       case 'logout': this.store.remove('mobileSessions', session.key); return { loggedOut: true };
       default: fail('手机端只允许读取内容和联系自己的 bot', 403);
     }

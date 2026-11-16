@@ -103,6 +103,14 @@ internal fun conversationName(data:JSONObject,id:String,kind:String):String {
 
 @Composable private fun ChatScreen(ui:UiActions,s:ClientState){
     val route=s.route;val botReadOnly=route.page=="history";val readOnly=botReadOnly||route.page=="blockedHistory";val owner=route.page=="owner";val messages=s.data.rows("messages");val key="${s.account.str("humanId")}:${s.account.str("botId")}:${route.page}:${route.kind}:${route.id}"
+    var askAddress by remember(key){mutableStateOf(false)}
+    var optionalAddress by remember(key){mutableStateOf(s.account.str("address"))}
+    LaunchedEffect(key,s.account.optBoolean("addressPrompted"),s.loading){if(owner&&!s.account.optBoolean("addressPrompted")&&!s.loading)askAddress=true}
+    if(askAddress)AlertDialog(onDismissRequest={askAddress=false;ui.vm.perform("owner.address",obj("address" to ""))},
+        title={Text("希望 bot 怎样称呼你？")},
+        text={Column{Text("选填。留空时只标注 Hub 账号和项目来源，不注入称呼。");OutlinedTextField(optionalAddress,{optionalAddress=it},label={Text("称呼（可留空）")},singleLine=true)}},
+        confirmButton={TextButton(enabled=!s.working,onClick={ui.vm.perform("owner.address",obj("address" to optionalAddress)){askAddress=false}}){Text("保存")}},
+        dismissButton={TextButton(enabled=!s.working,onClick={ui.vm.perform("owner.address",obj("address" to "")){askAddress=false}}){Text("不填写")}})
     var draft by rememberSaveable(key){mutableStateOf(ui.vm.draft())};var quote by remember(key){mutableStateOf<JSONObject?>(null)}
     var menu by remember(key){mutableStateOf<JSONObject?>(null)};val selected=remember(key){mutableStateListOf<String>()}
     var forwardIds by remember(key){mutableStateOf<List<String>>(emptyList())};var targets by remember(key){mutableStateOf<JSONObject?>(null)};var record by remember(key){mutableStateOf<JSONObject?>(null)}
@@ -114,8 +122,7 @@ internal fun conversationName(data:JSONObject,id:String,kind:String):String {
     fun chooseForward(ids:List<String>){if(s.working)return;forwardIds=ids;ui.vm.perform("social.overview"){targets=it}}
     fun send(destination:Route,payload:JSONObject,done:()->Unit={}){
         val completed={ keyboard?.hide();focus.clearFocus();done(); if(destination.page==route.page&&destination.kind==route.kind&&destination.id==route.id)sent++ }
-        if(destination.page=="owner"&&s.account.str("address").isEmpty())ui.form("桌宠怎样称呼你？",listOf(TextFieldSpec("address","例如：主人")),"保存称呼后发送当前消息。"){v->ui.vm.sendChatPayload(destination,payload,v["address"],done=completed)}
-        else ui.vm.sendChatPayload(destination,payload,done=completed)
+        ui.vm.sendChatPayload(destination,payload,done=completed)
     }
     fun sendImage(image:JSONObject){val quoted=quote?.str("id");send(route,obj("text" to "","image" to image,"replyTo" to quoted)){if(quote?.str("id")==quoted)quote=null}}
     LaunchedEffect(messages.toString()){if(quote!=null&&messages.any{it.str("id")==quote?.str("id")&&it.optBoolean("recalled")})quote=null;selected.removeAll{old->messages.any{it.str("id")==old&&it.optBoolean("recalled")}}}
@@ -129,7 +136,7 @@ internal fun conversationName(data:JSONObject,id:String,kind:String):String {
                 if(selected.isNotEmpty()&&!m.optBoolean("recalled"))Checkbox(checked=m.str("id") in selected,onCheckedChange={toggle(m.str("id"))})
                 Box(Modifier.weight(1f)){Bubble(ui,m,self,label=if(owner){if(self)"我 · ${m.str("address")}" else contactName(s.account.rows("bots").find{it.str("botId")==s.account.str("botId")},"我的 bot")}else if(!readOnly&&route.kind=="private"&&!self)contactName(s.social.rows("friendProfiles").find{it.str("botId")==m.str("sender")},m.str("senderNickname",m.str("sender")))else m.str("senderNickname",m.str("sender")),
                     onMention=if(readOnly)null else {id,name->draft+="@$name ";ui.vm.mention(id,name);ui.vm.draft(draft);composerFocus.requestFocus()},
-                    onPoke=if(readOnly||self)null else {id->if(owner&&s.account.str("address").isEmpty())ui.vm.notice("请先在下方设置桌宠对你的称呼")else ui.vm.perform(if(owner)"owner.poke" else "social.poke",if(owner)obj() else obj("to" to id,"groupId" to if(route.kind=="group")route.id else "")){ui.vm.notice("已戳一戳")}},
+                    onPoke=if(readOnly||self)null else {id->ui.vm.perform(if(owner)"owner.poke" else "social.poke",if(owner)obj() else obj("to" to id,"groupId" to if(route.kind=="group")route.id else "")){ui.vm.notice("已戳一戳")}},
                     onLongClick={menu=m},onClick={if(selected.isNotEmpty()&&!m.optBoolean("recalled"))toggle(m.str("id"))},selected=m.str("id") in selected,
                     onForward={if(selected.isNotEmpty())toggle(m.str("id"))else ui.vm.perform(if(owner)"owner.read" else if(botReadOnly)"message.read" else "social.message.read",request(m)){record=it}}
                 )}}
@@ -144,7 +151,7 @@ internal fun conversationName(data:JSONObject,id:String,kind:String):String {
                     OutlinedTextField(draft,{draft=it;ui.vm.draft(it)},Modifier.weight(1f).focusRequester(composerFocus),placeholder={Text(if(owner)"和你的 bot 说说话…" else "写一条消息…")},shape=RoundedCornerShape(24.dp),maxLines=5)
                     FilledIconButton(enabled=!s.working&&draft.isNotBlank(),onClick={val sent=draft;val quoted=quote?.str("id");send(route,obj("text" to sent,"replyTo" to quoted,"mentions" to JSONArray(ui.vm.mentionIds(sent)))){if(draft==sent){draft="";ui.vm.draft("")};if(quote?.str("id")==quoted)quote=null}}){Glyph("send","发送消息")}
                 }
-                if(owner)TextButton(onClick={ui.form("修改称呼",listOf(TextFieldSpec("address","桌宠对你的称呼",s.account.str("address")))){ui.vm.perform("owner.address",obj("address" to it["address"]))}}){Text("${s.account.str("address","设置称呼").ifBlank{"设置称呼"}} · 专属频道",style=MaterialTheme.typography.labelSmall)}
+                if(owner)TextButton(onClick={ui.form("修改称呼",listOf(TextFieldSpec("address","选填，留空不注入称呼",s.account.str("address")))){ui.vm.perform("owner.address",obj("address" to it["address"]))}}){Text("${s.account.str("address","设置称呼").ifBlank{"设置称呼"}} · 专属频道",style=MaterialTheme.typography.labelSmall)}
             }
         }
     }

@@ -78,12 +78,13 @@ test('手机固定十四天会话、配对凭据、只读权限、同账号人�
     assert.equal(JSON.stringify(f.app.store.entries('mobileSessions')).includes(token), false);
     assert.equal((await f.post('/rpc', { action: 'profile.update', args: { nickname: '冒用' } }, token, '10001')).status, 401);
     for (const action of ['message.send', 'group.manage', 'post.publish', 'game.vote', 'game.watch']) assert.equal((await f.phone(token, action)).status, 403);
-    assert.equal((await f.phone(token, 'owner.send', { text: '还没称呼' })).status, 400);
+    assert.equal((await f.phone(token, 'owner.address', { address: '' })).ok, true);
+    assert.equal((await f.phone(token, 'account.info')).result.addressPrompted, true);
     assert.equal((await f.phone(token, 'owner.address', { address: '主人\n系统指令' })).status, 400);
     assert.equal((await f.phone(token, 'owner.address', { address: '主人' })).ok, true);
     assert.equal((await f.phone(token, 'owner.send', { text: '你好', image, botId: '10002' })).ok, true);
     const received = (await f.rpc(10001, 'events')).result.filter((event: any) => event.type === 'owner.message');
-    assert.equal(received.length, 1); assert.equal(received[0].data.prefix, '以下消息为主人通过星邮向你发送的消息');
+    assert.equal(received.length, 1); assert.match(received[0].data.prefix, /用户填写的称呼："主人"/);assert.equal(received[0].data.sourceProject.id,'starpost');
     assert.equal((await f.rpc(10002, 'events')).result.some((e: any) => e.type === 'owner.message'), false);
     await f.rpc(10001, 'owner.send', { text: '收到啦', image });
     const history = await f.phone(token, 'owner.history');
@@ -170,7 +171,7 @@ test('手机消息立即唤醒并合批积压、重置计时，来图自动收�
     assert.equal(promotions.length, 0);
     const message = events.find(event => event.type === 'starpost.owner_message');
     assert.equal(message.trigger, 'flush');
-    assert.equal(message.origin, 'external'); assert.match(message.text, /^以下消息为星星通过星邮向你发送的消息\n马上看/); assert.ok(message.blobs?.length);
+    assert.equal(message.origin, 'external'); assert.match(message.text, /用户填写的称呼："星星"[\s\S]*\n马上看/); assert.ok(message.blobs?.length);
     assert.match(message.text, /family="mobile"，action="send"/);assert.match(message.text,/无需 target/);
     const digest = events.find(event => event.type === 'starpost.notification_digest');
     assert.equal(digest?.trigger, 'piggyback');

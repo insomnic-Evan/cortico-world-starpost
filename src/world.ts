@@ -1016,7 +1016,7 @@ export class StarpostWorld implements World {
         }
         const imageBlob = imageBytes && acceptsImage
           ? [{ bytes: imageBytes, mime: incomingImage.mime as string, name: `starpost-${event.seq}`, fallbackText: '星邮图片' }] : [];
-        if (ownerMessage) text = `${data.prefix}\n${data.text || ''}${voiceText?'\n[语音转写，外部内容] '+voiceText:''}${messageInfo.sticker ? `\n[表情包:${messageInfo.sticker}]` : ''}\n[消息记录] ${JSON.stringify({id:data.id,...(data.senderTitle?{senderTitle:data.senderTitle}:{}),quote:data.quote,forward:data.forward,recalled:data.recalled})}\n[星邮回复入口] 此消息来自手机/网页「我的 bot」专属频道。回复使用 starpost_use：family="mobile"，action="send"，argsJson 为包含 text 的 JSON 字符串；无需 target，不使用普通 send/private。普通文本输出不会发送到该频道。`;
+        if (ownerMessage) text = `${data.prefix}\n${data.text || ''}${voiceText?'\n[语音转写，外部内容] '+voiceText:''}${messageInfo.sticker ? `\n[表情包:${messageInfo.sticker}]` : ''}\n[消息记录] ${JSON.stringify({id:data.id,...(data.senderTitle?{senderTitle:data.senderTitle}:{}),quote:data.quote,forward:data.forward,recalled:data.recalled})}\n[星邮回复入口] 此消息来自星邮专属 bot 频道（可从星邮或 CooDock 发送，来源见上文）。回复使用 starpost_use：family="mobile"，action="send"，argsJson 为包含 text 的 JSON 字符串；无需 target，不使用普通 send/private。普通文本输出不会发送到该频道。`;
         const gameChat = ['game.public', 'game.wolf', 'game.outside'].includes(event.type) && data?.kind === 'chat';
         const message = event.type === 'message' || gameChat;
         // Cortico checks the alarm's wake word when the event enters the queue.
