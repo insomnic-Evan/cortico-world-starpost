@@ -540,10 +540,11 @@ class ComposeUiTest {
     @Test fun loginAndDarkTheme(){
         val vm=client();val state=mutableStateOf(ClientState(starting=false,theme="light"))
         compose.setContent { StarpostTheme(state.value.theme,false){StarpostApp(vm,state.value)} }
-        compose.onNodeWithText("邮箱地址").performTextInput("hello@example.com")
+        compose.onNodeWithText("使用 FFA hub 登录 / 注册").assertExists()
+        compose.onNodeWithText("邮箱地址").assertDoesNotExist()
         shot("android-login-light")
         compose.runOnIdle{state.value=state.value.copy(theme="dark")}
-        compose.onNodeWithText("hello@example.com").assertExists()
+        compose.onNodeWithText("使用 FFA hub 登录 / 注册").assertExists()
         shot("android-login-dark")
     }
     @Test fun chatDraftAndFocusSurviveRefreshAndTheme(){

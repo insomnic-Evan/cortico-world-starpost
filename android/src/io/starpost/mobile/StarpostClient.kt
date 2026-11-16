@@ -27,7 +27,8 @@ internal data class ClientState(
     val starting: Boolean = true, val signedIn: Boolean = false, val account: JSONObject = obj(),
     val route: Route = Route(), val data: JSONObject = obj(), val overview: JSONObject = obj(), val social: JSONObject = obj(),
     val loading: Boolean = false, val working: Boolean = false, val error: String = "", val notice: String = "",
-    val capsuleUnread: Int = 0, val theme: String = "system", val dynamicColor: Boolean = true, val activeGame: String = "", val expiresAt: Long = 0
+    val capsuleUnread: Int = 0, val theme: String = "system", val dynamicColor: Boolean = true, val activeGame: String = "", val expiresAt: Long = 0,
+    val hubWaiting: Boolean = false
 )
 internal class ApiError(val status: Int, message: String): IOException(message)
 internal class ConnectionFailure(cause: IOException): IOException(cause)
@@ -52,9 +53,11 @@ internal fun mobileRequest(base: String, path: String, body: JSONObject, token: 
         return result.optJSONObject("result") ?: obj("items" to result.optJSONArray("result"))
     } finally { c.disconnect() }
 }
-/** Keeps the existing encrypted session format, app ID and sticker directory for upgrades. */
+/** Keeps the existing encrypted session format and app ID; local content is account-scoped. */
 internal class StarpostClient(app: Application): AndroidViewModel(app) {
     private val sessions = SessionStore(app)
+    private val hubFlows = SessionStore(app, "hubLogin")
+    private var hubPending: JSONObject? = null
     private val preferences = app.getSharedPreferences("appearance", 0)
     private val network = Mutex()
     private var server = "https://starpost.com.cn"
@@ -65,7 +68,8 @@ internal class StarpostClient(app: Application): AndroidViewModel(app) {
     private val backStack = mutableListOf<Route>()
     private val mutable = MutableStateFlow(ClientState(theme = preferences.getString("theme", "system") ?: "system", dynamicColor = preferences.getBoolean("dynamic", true)))
     val state = mutable.asStateFlow()
-    private val library = StickerLibrary(File(app.filesDir, "sticker-favorites"))
+    private val library get() = StickerLibrary(File(getApplication<Application>().filesDir, "account-content/${contentScope()}/sticker-favorites"))
+    fun contentScope():String = accountContentScope(state.value.account, server)
     private val draftMentions = mutableMapOf<String,Map<String,String>>()
     private val drafts = mutableMapOf<String, String>()
     private val capsuleDrafts = mutableMapOf<String, CapsuleDraft>()
@@ -91,7 +95,11 @@ internal class StarpostClient(app: Application): AndroidViewModel(app) {
                 server=saved.str("server");token=saved.str("token")
                 mutable.update { it.copy(expiresAt=saved.optLong("expiresAt"), signedIn=true) }
                 start()
-            } else expire()
+            } else {
+                expire()
+                val pending=withContext(Dispatchers.IO){runCatching{JSONObject(hubFlows.load())}.getOrNull()}
+                if(pending!=null && pending.optLong("expiresAt")>System.currentTimeMillis() && validServer(pending.str("server"))){hubPending=pending;server=pending.str("server");mutable.update{it.copy(hubWaiting=true)}} else hubFlows.clear()
+            }
         }
     }
     private suspend fun saveSession() = withContext(Dispatchers.IO) { sessions.save(obj("server" to server,"token" to token,"botId" to state.value.account.str("botId"),"expiresAt" to state.value.expiresAt).toString()) }
@@ -201,6 +209,36 @@ internal class StarpostClient(app: Application): AndroidViewModel(app) {
         }catch(e:Exception){handle(e)}
     }
     fun retryStart() { viewModelScope.launch { mutable.update { it.copy(starting=true,error="") };start() } }
+    fun beginHubLogin(open:(String)->Unit) {
+        if(state.value.working||state.value.signedIn)return
+        mutable.update{it.copy(working=true,error="")}
+        viewModelScope.launch{try{
+            val verifier=java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(32).also{java.security.SecureRandom().nextBytes(it)})
+            val challenge=java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(java.security.MessageDigest.getInstance("SHA-256").digest(verifier.toByteArray(Charsets.US_ASCII)))
+            val result=request("/mobile/hub/start",obj("challenge" to challenge),false)
+            val url=URL(result.getString("authorizationUrl"))
+            val allowed=if(server in listOf("https://starpost.com.cn","https://8.148.13.225"))setOf("starpost.com.cn","8.148.13.225")else setOf(URL(server).host)
+            require(url.protocol=="https"&&url.host in allowed&&url.userInfo==null&&url.port in listOf(-1,443)&&url.path=="/web/hub/start"){"登录地址无效，请检查服务器配置"}
+            val pending=obj("flowId" to result.getString("flowId"),"verifier" to verifier,"server" to server,"url" to url.toString(),"expiresAt" to result.getLong("expiresAt"))
+            withContext(Dispatchers.IO){hubFlows.save(pending.toString())};hubPending=pending
+            mutable.update{it.copy(hubWaiting=true)};open(url.toString())
+        }catch(e:Exception){handle(e,false)}finally{mutable.update{it.copy(working=false)}}}
+    }
+    fun cancelHubLogin(){if(state.value.working)return;hubPending=null;hubFlows.clear();mutable.update{it.copy(hubWaiting=false,error="")}}
+    fun completeHubLogin(flowId:String?=null){
+        val pending=hubPending?:return
+        if(state.value.working||state.value.signedIn||flowId!=null&&flowId!=pending.str("flowId"))return
+        if(pending.optLong("expiresAt")<=System.currentTimeMillis()){cancelHubLogin();notice("FFA 登录已过期，请重新发起");return}
+        mutable.update{it.copy(working=true,error="")}
+        viewModelScope.launch{try{
+            val result=request("/mobile/hub/poll",obj("flowId" to pending.str("flowId"),"verifier" to pending.str("verifier")),false)
+            if(result.str("status")=="pending")return@launch
+            require(result.str("status")=="complete"){"登录结果无效"}
+            token=result.getString("accessToken");sessionEpoch++
+            mutable.update{it.copy(expiresAt=result.getLong("expiresAt"),account=result,signedIn=true,hubWaiting=false)}
+            saveSession();hubPending=null;hubFlows.clear();start()
+        }catch(e:Exception){if(e is ApiError && e.status in listOf(400,403,409,410)){hubPending=null;hubFlows.clear();mutable.update{it.copy(hubWaiting=false)}};handle(e,false)}finally{mutable.update{it.copy(working=false)}}}
+    }
     fun login(mode: String,email: String,password: String,nickname: String,challenge: String,code: String,customServer: String,done: ()->Unit) {
         if(state.value.working)return
         mutable.update { it.copy(working=true,error="") }
@@ -315,7 +353,7 @@ internal class StarpostClient(app: Application): AndroidViewModel(app) {
     }
     fun foreground(active:Boolean) {
         pollJob?.cancel();pollJob=null
-        if(active)pollJob=viewModelScope.launch { while(isActive){delay(8000);if(!state.value.signedIn || state.value.working || state.value.account.optBoolean("needsEmail"))continue
+        if(active)pollJob=viewModelScope.launch { while(isActive){delay(if(hubPending!=null)3000 else 8000);if(hubPending!=null && !state.value.signedIn){completeHubLogin();continue};if(!state.value.signedIn || state.value.working || state.value.account.optBoolean("needsEmail"))continue
             try { checkGame();checkCapsules();if(state.value.route.before==null && state.value.route.page in listOf("social","socialHistory","owner","humanRoom","humanReservation","game") && !(state.value.route.page=="game" && state.value.data.optJSONObject("game")?.str("status") in listOf("finished","closed","cancelled")))refreshNow(true) }catch(e:Exception){handle(e)}
         } }
     }
@@ -339,7 +377,7 @@ internal class StarpostClient(app: Application): AndroidViewModel(app) {
         for(g in v.rows("games")){val delta=runCatching { Instant.parse(g.str("scheduledAt")).toEpochMilli()-System.currentTimeMillis() }.getOrDefault(-1)
             if(g.optBoolean("participant")&&!g.optBoolean("checkedInSelf")&&g.str("status")=="scheduled"&&delta in 1..180000&&reminded.add(g.str("gameId")))notice("「${g.str("title")}」已到集合时间，请进入游戏报到")}
     }
-    suspend fun favorites():List<File> = withContext(Dispatchers.IO){library.list()}
-    suspend fun sticker(file:File):JSONObject=withContext(Dispatchers.IO){obj("mime" to StickerLibrary.mime(file),"base64" to android.util.Base64.encodeToString(library.read(file),android.util.Base64.NO_WRAP))}
-    fun collect(image:JSONObject){viewModelScope.launch{try{withContext(Dispatchers.IO){library.save(android.util.Base64.decode(image.getString("base64"),android.util.Base64.DEFAULT),image.getString("mime"))};notice("已收藏到表情包")}catch(e:Exception){notice(e.message?:"收藏失败")}}}
+    suspend fun favorites():List<File> {val owned=library;return withContext(Dispatchers.IO){owned.list()}}
+    suspend fun sticker(file:File):JSONObject {val owned=library;return withContext(Dispatchers.IO){obj("mime" to StickerLibrary.mime(file),"base64" to android.util.Base64.encodeToString(owned.read(file),android.util.Base64.NO_WRAP))}}
+    fun collect(image:JSONObject){val owned=library;viewModelScope.launch{try{withContext(Dispatchers.IO){owned.save(android.util.Base64.decode(image.getString("base64"),android.util.Base64.DEFAULT),image.getString("mime"))};notice("已收藏到表情包")}catch(e:Exception){notice(e.message?:"收藏失败")}}}
 }

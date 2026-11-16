@@ -53,6 +53,10 @@ class MainActivity: ComponentActivity() {
     }
     private fun openNoticeIfReady(state: ClientState) {
         val action=intent?.action
+        val link=intent?.data
+        if(action==Intent.ACTION_VIEW&&link?.scheme=="io.starpost.mobile"&&link.host=="hub"&&link.path=="/return"&&!state.starting&&!state.working){
+            setIntent(Intent(this,MainActivity::class.java));client.completeHubLogin(link.getQueryParameter("flow"));return
+        }
         if (action !in listOf(OwnerAlerts.OPEN,OwnerAlerts.OPEN_CHAT) || state.starting || state.working || state.account.str("humanId").isEmpty()) return
         val path = intent.data?.pathSegments
         setIntent(Intent(this, MainActivity::class.java))

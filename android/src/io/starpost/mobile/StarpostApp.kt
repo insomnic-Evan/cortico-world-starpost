@@ -53,7 +53,8 @@ internal class UiActions(val vm:StarpostClient){var modal by mutableStateOf<Moda
 }
 
 @Composable internal fun StarpostApp(vm:StarpostClient,state:ClientState) {
-    val ui=remember(vm){UiActions(vm)}
+    val contentScope=vm.contentScope()
+    val ui=remember(vm,contentScope){UiActions(vm)}
     OfferChatAlerts(state,vm::enableOwnerAlerts,vm::notice)
     LaunchedEffect(state.working,ui.pendingBoundBot,state.signedIn){
         if(!state.signedIn){ui.pendingBoundBot=null;return@LaunchedEffect}
@@ -66,7 +67,7 @@ internal class UiActions(val vm:StarpostClient){var modal by mutableStateOf<Moda
     }
     val context=androidx.compose.ui.platform.LocalContext.current
     val backgroundScope=rememberCoroutineScope()
-    val background=remember{BackgroundAppearance(context.applicationContext)}
+    val background=remember(contentScope){BackgroundAppearance(context.applicationContext,contentScope)}
     LaunchedEffect(background){background.load()}
     LaunchedEffect(state.signedIn){if(!state.signedIn)ui.miniAppsOpen=false}
     val pageTitle=when(state.route.page){
@@ -125,14 +126,26 @@ internal class UiActions(val vm:StarpostClient){var modal by mutableStateOf<Moda
 }
 
 @Composable private fun LoginScreen(vm:StarpostClient,state:ClientState){
-    var mode by rememberSaveable { mutableStateOf("password") };val actual=if(state.account.optBoolean("needsEmail"))"claim" else mode
+    var mode by rememberSaveable { mutableStateOf("hub") };val actual=if(state.account.optBoolean("needsEmail"))"claim" else mode
+    val hubBrowser=androidx.compose.ui.platform.LocalUriHandler.current
     var email by rememberSaveable(actual){mutableStateOf("")};var password by remember(actual){mutableStateOf("")};var nickname by rememberSaveable(actual){mutableStateOf("")};var code by rememberSaveable(actual){mutableStateOf("")};var challenge by remember(actual){mutableStateOf("")};var challengeEmail by remember(actual){mutableStateOf("")};var retry by remember{mutableIntStateOf(0)};var customServer by rememberSaveable{mutableStateOf("https://starpost.com.cn")};var visible by remember{mutableStateOf(false)}
     LaunchedEffect(retry){if(retry>0){kotlinx.coroutines.delay(1000);retry--}}
     Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding().verticalScroll(rememberScrollState()).padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally){Column(Modifier.widthIn(max=460.dp).fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(16.dp)){
         Spacer(Modifier.height(24.dp));Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Surface(shape=RoundedCornerShape(26.dp),color=MaterialTheme.colorScheme.primaryContainer){Glyph("mail",modifier=Modifier.padding(20.dp).size(40.dp),color=MaterialTheme.colorScheme.onPrimaryContainer)};Spacer(Modifier.weight(1f));IconButton(onClick={vm.theme(if(state.theme=="dark")"light" else "dark")}){Glyph(if(state.theme=="dark")"sun" else "moon","切换深浅色")}}
         Text(when(actual){"claim"->"让故事继续";"register"->"在星邮相遇";"legacy"->"找回旧身份";else->"欢迎回到\n星邮。"},style=MaterialTheme.typography.displayMedium,fontWeight=FontWeight.Bold)
         Text(if(actual=="claim")"为 ${state.account.str("humanId")} 绑定邮箱，保留原 bot 与游戏记录。"else if(actual=="legacy")"使用原 bot ID 和凭据升级旧账号。"else "与朋友聊天，和 bot 一起生活。",style=MaterialTheme.typography.bodyLarge,color=MaterialTheme.colorScheme.onSurfaceVariant)
-        if(actual !in listOf("claim","legacy"))ChoiceTabs(listOf("password" to "密码登录","code" to "验证码","register" to "注册"),actual){mode=it}
+        if(actual=="hub"){
+            Text("使用 FFA hub 统一登录或注册。原星邮邮箱和密码可以继续在 Hub 使用；关联多个星邮号时，登录后选择。",style=MaterialTheme.typography.bodyLarge)
+            if(state.error.isNotEmpty())Text(state.error,color=MaterialTheme.colorScheme.error)
+            if(state.hubWaiting){
+                Text("请在浏览器完成 FFA 授权和选号，然后返回星邮。登录校验保留十分钟。",color=MaterialTheme.colorScheme.onSurfaceVariant)
+                Button(enabled=!state.working,onClick={vm.completeHubLogin()},modifier=Modifier.fillMaxWidth()){Text(if(state.working)"正在验证…" else "完成登录")}
+                TextButton(enabled=!state.working,onClick=vm::cancelHubLogin){Text("取消并重新登录")}
+            }else Button(enabled=!state.working,onClick={vm.beginHubLogin{hubBrowser.openUri(it)}},modifier=Modifier.fillMaxWidth().heightIn(min=56.dp)){Text(if(state.working)"正在连接…" else "使用 FFA hub 登录 / 注册")}
+            Text("原 ID、好友、聊天和游戏记录保留。各业务账号分别保存；登录状态保留 14 天。",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            TextButton(enabled=!state.working&&!state.hubWaiting,onClick={mode="legacy"}){Text("尚未绑定邮箱？升级旧账号")}
+            return@Column
+        }
         if(actual=="legacy")OutlinedTextField(customServer,{customServer=it},Modifier.fillMaxWidth(),label={Text("服务器 HTTPS 地址")},singleLine=true)
         OutlinedTextField(email,{email=it},Modifier.fillMaxWidth(),label={Text(if(actual=="legacy")"Bot ID" else "邮箱地址")},leadingIcon={Glyph(if(actual=="legacy")"person" else "mail")},singleLine=true,keyboardOptions=KeyboardOptions(keyboardType=if(actual=="legacy")KeyboardType.Number else KeyboardType.Email))
         if(actual!="code")OutlinedTextField(password,{password=it},Modifier.fillMaxWidth(),label={Text(if(actual=="legacy")"本机凭据" else "密码（8–128 字符）")},singleLine=true,visualTransformation=if(visible)VisualTransformation.None else PasswordVisualTransformation(),keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Password),trailingIcon={TextButton(onClick={visible=!visible}){Text(if(visible)"隐藏" else "显示")}})
@@ -144,7 +157,7 @@ internal class UiActions(val vm:StarpostClient){var modal by mutableStateOf<Moda
         if(state.error.isNotEmpty())Text(state.error,color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodyMedium)
         Button(onClick={if(challenge.isNotEmpty()&&challengeEmail!=email.trim())vm.notice("邮箱已修改，请重新获取验证码")else vm.login(actual,email,password,nickname,challenge,code,customServer){password=""}},shapes=ButtonDefaults.shapes(),enabled=!state.working&&email.isNotBlank(),modifier=Modifier.fillMaxWidth().heightIn(min=56.dp)){if(state.working)CircularProgressIndicator(Modifier.size(20.dp),strokeWidth=2.dp)else{Text(when(actual){"claim"->"验证并绑定邮箱";"register"->"创建我的账号";"legacy"->"验证旧账号";else->"进入星邮"},style=MaterialTheme.typography.titleMedium);Spacer(Modifier.width(12.dp));Glyph("chevron")}}
         Text("登录状态保留 14 天",style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
-        if(actual!="claim")TextButton(onClick={mode=if(actual=="legacy")"password" else "legacy"}){Text(if(actual=="legacy")"返回邮箱登录" else "已有 bot 凭据？升级旧账号")}
+        if(actual!="claim")TextButton(onClick={mode="hub"}){Text("返回 FFA hub 登录")}
         Spacer(Modifier.height(24.dp))
     }}
 }

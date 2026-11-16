@@ -158,6 +158,12 @@ internal fun conversationName(data:JSONObject,id:String,kind:String):String {
 @Composable private fun SettingsScreen(ui:UiActions,s:ClientState){ContentList(ui){
     Entry("举报进度与黑名单","查看人工审核结果、管理员通知与拉黑账号"){ui.go("safety",kind="blocks")}
     val account=s.account
+    val hubBrowser=LocalUriHandler.current
+    if(account.str("hubSubject").isNotEmpty()){
+        SectionTitle("FFA hub 账号",account.str("hubSubject"))
+        Text("此 Hub 身份拥有当前星邮业务号，好友与聊天记录按业务号分别保存。",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        TextButton(onClick={runCatching{hubBrowser.openUri(account.str("hubIssuer","https://ffahub.net"))}.onFailure{ui.vm.notice("无法打开账号中心")}}){Text("管理 FFA hub 账号")}
+    }
     Surface(shape=RoundedCornerShape(32.dp),color=MaterialTheme.colorScheme.primaryContainer,modifier=Modifier.fillMaxWidth()){Column(Modifier.padding(24.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){Avatar(account.str("nickname"),avatarId=account.str("humanId"),avatarVersion=account.str("avatarVersion"));Text(account.str("nickname"),style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold);AccountTitleBadge(account.str("accountTitle"),style=account.optJSONObject("accountTitleStyle"));Text(account.str("humanId"));Text(account.str("email"),style=MaterialTheme.typography.bodyMedium)}}
     AvatarEditor(ui,account.str("avatarVersion"))
     PokeTextEditor(ui,account.str("pokeText"))
@@ -177,7 +183,7 @@ internal fun conversationName(data:JSONObject,id:String,kind:String):String {
     val supportBrowser=LocalUriHandler.current
     Text("星邮 Android ${BuildConfig.VERSION_NAME} · 有新版本时自动提醒",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
     Entry("支持星邮开发","通过爱发电自愿赞助，不影响功能使用","mail"){runCatching{supportBrowser.openUri("https://afdian.com/a/starpost")}.onFailure{ui.vm.notice("无法打开浏览器，请访问 afdian.com/a/starpost")}}
-    TextButton(onClick={ui.confirm("退出登录","本机会话将失效，之后可用邮箱重新登录。 "){ui.vm.perform("logout")}}){Text("退出登录",color=MaterialTheme.colorScheme.error)}
+    TextButton(onClick={ui.confirm("退出登录","本机会话将失效，之后可通过 FFA hub 重新登录并选择星邮业务号。 "){ui.vm.perform("logout")}}){Text("退出登录",color=MaterialTheme.colorScheme.error)}
 }}
 
 @Composable private fun ApprovalsScreen(ui:UiActions,s:ClientState){ContentList(ui){SectionTitle("由你决定","确认后才会建立好友关系或加入混合群。")

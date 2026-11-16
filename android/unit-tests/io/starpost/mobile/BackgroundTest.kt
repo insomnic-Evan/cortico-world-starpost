@@ -19,6 +19,19 @@ import java.io.File
 @Config(sdk=[26,35])
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class BackgroundTest {
+    @Test fun accountsKeepSeparateBackgroundsAndStickerFiles()=runBlocking<Unit> {
+        val context=ApplicationProvider.getApplicationContext<Application>()
+        val a=accountContentScope(obj("humanId" to "10001H","hubSubject" to "ffa_a"),"https://starpost.com.cn")
+        val b=accountContentScope(obj("humanId" to "10002H","hubSubject" to "ffa_a"),"https://starpost.com.cn")
+        val c=accountContentScope(obj("humanId" to "10001H","hubSubject" to "ffa_b"),"https://starpost.com.cn")
+        assertNotEquals(a,b);assertNotEquals(a,c)
+        val first=BackgroundAppearance(context,a);first.load();first.updateMask(.8f)
+        val second=BackgroundAppearance(context,b);second.load();assertEquals(.6f,second.mask,.001f)
+        val reload=BackgroundAppearance(context,a);reload.load();assertEquals(.8f,reload.mask,.001f)
+        val l1=StickerLibrary(File(context.filesDir,"test-isolation/$a"));val l2=StickerLibrary(File(context.filesDir,"test-isolation/$b"))
+        val file=l1.save(image(),"image/png");assertTrue(l2.list().isEmpty())
+        assertThrows(java.io.IOException::class.java){l2.read(file)}
+    }
     @Test fun imageCopyUsesScopedCacheAndTextCopyUsesClipboard(){
         val context=ApplicationProvider.getApplicationContext<Application>();val bytes=image()
         val clipboard=context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager

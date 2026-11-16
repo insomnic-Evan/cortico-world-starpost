@@ -58,9 +58,14 @@ internal fun backgroundImage(bytes:ByteArray):ByteArray {
     return output.toByteArray().also{require(it.size<=2*1024*1024){"图片过大，请换一张图片"}}
 }
 
-internal class BackgroundAppearance(context:Context) {
-    private val file=AtomicFile(File(context.filesDir,"appearance-background.jpg"))
-    private val prefs=context.getSharedPreferences("starpost-appearance",Context.MODE_PRIVATE)
+internal fun accountContentScope(account:org.json.JSONObject,server:String):String {
+    val key=listOf(server,account.optString("hubIssuer"),account.optString("hubSubject"),account.optString("humanId")).joinToString("\u0000")
+    return java.security.MessageDigest.getInstance("SHA-256").digest(key.toByteArray(Charsets.UTF_8)).joinToString(""){"%02x".format(it)}
+}
+internal class BackgroundAppearance(context:Context,scope:String="") {
+    private val suffix=if(scope.isEmpty())""else "-$scope"
+    private val file=AtomicFile(File(context.filesDir,"appearance-background$suffix.jpg"))
+    private val prefs=context.getSharedPreferences("starpost-appearance$suffix",Context.MODE_PRIVATE)
     var bitmap by mutableStateOf<Bitmap?>(null);private set
     var mask by mutableFloatStateOf(prefs.getFloat("background-mask",.6f).let{if(it.isFinite())it.coerceIn(.2f,.9f)else .6f});private set
     var busy by mutableStateOf(true);private set

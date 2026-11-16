@@ -12,10 +12,14 @@ export class HubBridge {
     let response; try { response = await new Promise((resolve, reject) => { const raw = JSON.stringify(body); const request = http.request(this.config.internalBase + path, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: this.auth, Host: this.config.host, 'Content-Length': Buffer.byteLength(raw) } }, res => { let data = ''; res.on('data', part => { data += part.toString(); if (Buffer.byteLength(data) > 4 * 1024 * 1024) request.destroy(Error('Large response')); }); res.on('error', reject); res.on('end', () => { try { resolve({ status: res.statusCode, data: JSON.parse(data) }); } catch { reject(Error('Bad response')); } }); }); request.setTimeout(4000, () => request.destroy(Error('Timeout'))); request.on('error', reject); request.end(raw); }); } catch { fail('FFA hub 暂时不可用，请稍后重试；已有内容和草稿保留', 503); }
     const out = response.data; if (response.status !== 200 || !out.ok) fail(out.message || 'FFA hub 验证失败', response.status); return out.result;
   }
-  snapshot() { return { people: this.store.entries('people').map(([id, p]) => ({ id, nickname: p.nickname, email: p.email, password: p.password, aliasOf: p.aliasOf })), bots: this.knownIds().filter(id => !this.store.get('accounts', id)?.hubPending).map(id => ({ id, nickname: this.profile(id).nickname, owner: this.accounts.owner(id), teenMode: this.store.get('teenSettings', id)?.enabled, dailyGames: this.store.get('limits', id)?.maxWerewolfGamesPerDay })) }; }
+  snapshot() { return { people: this.store.entries('people').filter(([, p]) => !p.hubPending).map(([id, p]) => ({ id, nickname: p.nickname, email: p.email, password: p.password, aliasOf: p.aliasOf })), bots: this.knownIds().filter(id => !this.store.get('accounts', id)?.hubPending).map(id => ({ id, nickname: this.profile(id).nickname, owner: this.accounts.owner(id), teenMode: this.store.get('teenSettings', id)?.enabled, dailyGames: this.store.get('limits', id)?.maxWerewolfGamesPerDay })) }; }
   async sync() {
     const result = await this.request('/v1/starpost/import', this.snapshot());
-    this.store.transaction(() => { for (const link of result.links ?? []) if (!this.store.get('hubOriginalMappings', link.external_id)) this.store.put('hubOriginalMappings', link.external_id, { subject: link.subject, epoch: link.epoch ?? 1 }); }); return result;
+    this.store.transaction(() => { for (const link of result.links ?? []) {
+      if (!this.store.get('hubOriginalMappings', link.external_id)) this.store.put('hubOriginalMappings', link.external_id, { subject: link.subject, epoch: link.epoch ?? 1 });
+      const p = this.store.get('people', link.external_id);
+      if (p && p.hubSubject !== link.subject) this.store.put('people', link.external_id, { ...p, hubSubject: link.subject });
+    } }); return result;
   }
   async status(externalId) { let s = await this.request('/v1/legacy/status', { externalId }); if (!s.known || !this.store.get('hubOriginalMappings', externalId)) { await this.sync(); s = await this.request('/v1/legacy/status', { externalId }); } if (!s.known || !s.allowed) fail('该账号在 FFA hub 中受限，请到账号中心处理', 403);
     if (s.kind === 'bot' && s.policy) this.store.transaction(() => {
@@ -38,6 +42,7 @@ export class HubBridge {
     return state;
   }
   filterNotifications(result, state) { return { ...result, items: (result.items ?? []).filter(item => { const bot = item.botId ?? (item.kind === 'owner' ? item.target : null); return !bot || state.botAccess?.some(row => row.external_id === bot); }) }; }
+  accountInfo(result, state) { return { ...result, hubSubject: state.subject, hubIssuer: this.config.issuer, loginProvider: 'ffa-hub', identityScope: { service: 'starpost', subject: state.subject, businessId: result.humanId } }; }
   async verifyPassword(id, password) { return this.request('/v1/legacy/password', { externalId: id, password }); }
   async botClaims(token, installationId, deviceId, routeEpoch) {
     if (typeof token !== 'string' || token.length < 24 || token.length > 256 || typeof installationId !== 'string' || !installationId || typeof deviceId !== 'string' || !deviceId) fail('Hub 安装凭据不完整', 401);
@@ -92,9 +97,10 @@ export class HubBridge {
   }
   async signInIdentity(input) {
       const allowed = await this.request('/v1/links', { subject: input.subject });
+      if (allowed.kind && allowed.kind !== 'human') fail('需要 FFA 人类账号授权');
       let externalId = input.externalId;
       if (externalId && !allowed.links.some(l => l.external_id === externalId && l.kind === 'human')) fail('业务账号不属于此 FFA 身份');
-      if (!externalId) externalId = allowed.links.find(l => l.kind === 'human')?.external_id;
+      if (!externalId) { const choices = allowed.links.filter(l => l.kind === 'human'); if (choices.length > 1) fail('请选择要登录的星邮业务号', 409); externalId = choices[0]?.external_id; }
       if (!externalId) {
         // This creates a new business number; email is not used as an ownership key.
         const existing = this.store.list('people', "json_extract(data,'$.hubSubject')=?", [input.subject], { limit: 1 })[0];
@@ -103,13 +109,16 @@ export class HubBridge {
           const next = this.store.get('meta', 'nextHumanId'), humanId = `${next}H`;
           if (!Number.isSafeInteger(next) || next < 10001 || this.store.get('people', humanId)) fail('账号号段异常', 503);
           this.store.put('meta', 'nextHumanId', next + 1);
-          this.store.put('people', humanId, { humanId, nickname: allowed.profile.nickname, email: allowed.profile.email, password: null, epoch: 1, hubSubject: input.subject, createdAt: new Date(this.clock()).toISOString() }); return humanId;
+          this.store.put('people', humanId, { humanId, nickname: allowed.profile.nickname, email: allowed.profile.email, password: null, epoch: 1, hubSubject: input.subject, hubPending: true, createdAt: new Date(this.clock()).toISOString() }); return humanId;
         });
         await this.request('/v1/starpost/link-new', { subject: input.subject, externalId });
       }
       return this.store.transaction(() => {
+        const person = this.accounts.person(externalId);
+        this.store.put('people', person.humanId, { ...person, hubSubject: input.subject, hubPending: false, email: allowed.profile.email || person.email });
+        if (!this.store.get('hubOriginalMappings', externalId)) this.store.put('hubOriginalMappings', externalId, { subject: input.subject, epoch: allowed.epoch });
         const out = this.accounts.issue(externalId), key = createHash('sha256').update(out.accessToken).digest('hex'), row = this.store.get('humanSessions', key);
-        this.store.put('humanSessions', key, { ...row, hubSubject: input.subject, hubEpoch: allowed.epoch, hubServiceEpoch: allowed.serviceEpoch }); return out;
+        this.store.put('humanSessions', key, { ...row, hubSubject: input.subject, hubEpoch: allowed.epoch, hubServiceEpoch: allowed.serviceEpoch }); return { ...out, hubSubject: input.subject, hubIssuer: this.config.issuer, loginProvider: 'ffa-hub' };
       });
   }
 }

@@ -880,7 +880,17 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
     res.once('finish', () => metrics.record(metricAction, res.statusCode, started));
     try {
       if (req.method === 'GET' && req.url === '/health') { res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end('{"ok":true}'); return; }
-      if (hubSso && req.method === 'GET' && ['/web/hub/start', '/web/hub/callback'].includes(req.url.split('?')[0])) { await hubSso.handle(req, res); return; }
+      if (req.method === 'GET' && req.url === '/web/login-info') { res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify({ ok: true, result: { hubOnly: Boolean(hubSso && hubConfig.humanLogin === 'hub'), issuer: hubConfig?.issuer } })); return; }
+      if (hubSso && (req.method === 'GET' && ['/web/hub/start', '/web/hub/callback'].includes(req.url.split('?')[0]) || req.method === 'POST' && req.url === '/web/hub/select')) { await hubSso.handle(req, res); return; }
+      if (hubSso && req.method === 'POST' && ['/mobile/hub/start', '/mobile/hub/poll'].includes(req.url)) {
+        if (!req.headers['content-type']?.startsWith('application/json')) fail('需要 JSON 请求', 415);
+        let raw = ''; for await (const part of req) { raw += part.toString(); if (Buffer.byteLength(raw) > 4096) fail('请求过大', 413); }
+        let input; try { input = JSON.parse(raw); } catch { fail('JSON 格式错误'); }
+        if (!input || typeof input !== 'object' || Array.isArray(input)) fail('请求格式错误');
+        const remote = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress) ? String(req.headers['x-real-ip'] ?? req.socket.remoteAddress) : req.socket.remoteAddress;
+        const result = await hubSso.mobile(req.url.endsWith('/start') ? 'start' : 'poll', input, remote);
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify({ ok: true, result })); return;
+      }
       if (req.method === 'GET' && req.url === '/metrics') {
         if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress)) fail('仅允许本机读取指标', 403);
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
@@ -933,6 +943,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         const web = req.url === '/web/auth';
         if (web && ![`https://${req.headers.host}`, `http://${req.headers.host}`].includes(req.headers.origin)) fail('网页请求来源无效', 403);
         const input = JSON.parse(raw);
+        if (hubConfig?.humanLogin === 'hub' && !(input.action === 'claim' || input.action === 'code' && input.purpose === 'claim')) fail('星邮注册和登录已升级为 FFA hub，请在网页使用 Hub 登录，或更新 APP；已登录的账号可继续使用', 409);
         let legacyHumanId;
         if (input.action === 'claim' || input.action === 'code' && input.purpose === 'claim') {
           const token = /(?:^|;\s*)starpost_session=([a-f0-9]{64})(?:;|$)/.exec(req.headers.cookie ?? '')?.[1] ?? '';
@@ -967,8 +978,11 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         } else {
           const token = /(?:^|;\s*)starpost_session=([a-f0-9]{64})(?:;|$)/.exec(req.headers.cookie ?? '')?.[1] ?? '';
           const session = access.authenticate(`Bearer ${token}`);
+          if (req.headers['x-starpost-account'] && req.headers['x-starpost-account'] !== (session.human ? session.owner : session.humanId)) fail('账号已在其他页面切换，请重新打开星邮', 401);
           const hubState = hubBridge && input.action !== 'logout' ? await hubBridge.sessionCheck(session, false, input.action, input.args ?? {}) : null;
+          if (req.headers['x-ffa-subject'] && req.headers['x-ffa-subject'] !== hubState?.subject) fail('Hub 身份已变更，请重新登录', 401);
           result = store.transaction(() => access.call(session, input.action, privacy.decode(input.args ?? {},input.action)));
+          if (hubState && input.action === 'account.info') result = hubBridge.accountInfo(result, hubState);
           if (hubState && input.action === 'owner.notifications') result = hubBridge.filterNotifications(result, hubState);
           if (hubBridge && input.action === 'account.bind') await hubBridge.sync();
           if (input.action === 'logout') res.setHeader('Set-Cookie', cookie('', 0));
@@ -1003,10 +1017,11 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
           res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
           res.end(JSON.stringify({ ok: true, result })); return;
         }
-        if (hubBridge && req.url === '/mobile/rpc' && input.action !== 'logout') await hubBridge.sessionCheck(access.authenticate(req.headers.authorization), false, input.action, input.args ?? {});
-        const result = store.transaction(() => req.url === '/mobile/login'
+        const hubState = hubBridge && req.url === '/mobile/rpc' && input.action !== 'logout' ? await hubBridge.sessionCheck(access.authenticate(req.headers.authorization), false, input.action, input.args ?? {}) : null;
+        let result = store.transaction(() => req.url === '/mobile/login'
           ? access.signIn(input, remote)
           : access.call(access.authenticate(req.headers.authorization), input.action, privacy.decode(input.args ?? {},input.action)));
+        if (hubState && input.action === 'account.info') result = hubBridge.accountInfo(result, hubState);
         if (hubBridge && req.url === '/mobile/login') { await hubBridge.sync(); await hubBridge.sessionCheck(access.authenticate(`Bearer ${result.accessToken}`), true); }
         if (hubBridge && req.url === '/mobile/rpc' && input.action === 'account.bind') await hubBridge.sync();
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
