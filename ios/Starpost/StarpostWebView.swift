@@ -117,15 +117,9 @@ final class BrowserController: UIViewController, WKNavigationDelegate, WKUIDeleg
                 try session.validate()
                 if !installedCookie {
                     let store = web.configuration.websiteDataStore.httpCookieStore
-                    for existing in await store.allCookies() where existing.name == "starpost_session" { await store.deleteCookie(existing) }
+                    for existing in await store.allCookies() where existing.name == "starpost_session" { await store.delete(existing) }
                     guard active, !Task.isCancelled else { return }
-                    guard let cookie = HTTPCookie(properties: [
-                        .name: "starpost_session", .value: session.accessToken,
-                        .domain: StarpostIdentity.origin.host!, .path: "/web",
-                        .secure: "TRUE", .expires: session.expiration,
-                        HTTPCookiePropertyKey("HttpOnly"): "TRUE",
-                        HTTPCookiePropertyKey("SameSite"): "Strict"
-                    ]), cookie.isHTTPOnly, cookie.isSecure else { throw ClientError.invalidResponse }
+                    let cookie = try session.webCookie()
                     await store.setCookie(cookie)
                     installedCookie = true
                 }
@@ -208,6 +202,16 @@ final class BrowserController: UIViewController, WKNavigationDelegate, WKUIDeleg
         let valid = active && frame.isMainFrame && origin.protocol == "https" && origin.host == StarpostIdentity.origin.host
             && (origin.port == 0 || origin.port == 443) && UIApplication.shared.applicationState == .active
         decisionHandler(valid ? .prompt : .deny)
+    }
+
+    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
+                 for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+        guard active, navigationAction.targetFrame == nil, let url = navigationAction.request.url else { return nil }
+        if StarpostIdentity.isTrusted(url) { webView.load(navigationAction.request) }
+        else if navigationAction.navigationType == .linkActivated, url.scheme == "https", url.user == nil, url.password == nil {
+            UIApplication.shared.open(url)
+        }
+        return nil
     }
 
     private func canPresent(_ frame: WKFrameInfo) -> Bool {

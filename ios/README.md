@@ -2,6 +2,12 @@
 
 SwiftUI 原生外壳 + WKWebView 复用星邮移动网页，优先保持现有功能。支持 iPhone / iPad，最低 iOS / iPadOS 17。版本 `0.1.0 (1)`，Bundle ID `io.starpost.ios`。
 
+## 当前验证状态（2026-11-16）
+
+工程已建立，源码语法解析、Xcode 工程引用、plist / scheme / 图标资源检查通过；7 项相关 Hub 服务端与客户端协议回归通过。线上只读检查确认 `/health` 正常，登录入口为 `https://ffahub.net`。
+
+GitHub 仓库 Actions 设置已启用、工作流已注册，但执行接口返回 HTTP 422 `Actions has been disabled for this user.`，尚未创建运行任务。因此 **Swift 核心测试、Xcode 编译、模拟器截图和真机验收均尚未执行，没有生成 IPA**。恢复账号 Actions 后，运行 `Build unsigned iOS client`，源码选择 `ios-client`，继续修复构建中发现的问题并验收。
+
 ## 使用方式
 
 1. 安装前须给 IPA 签名。**无签名 IPA 不能直接在普通 iPhone 上安装**，不能通过改后缀、网页下载或传输文件省略系统签名要求。
@@ -34,7 +40,7 @@ SwiftUI 原生外壳 + WKWebView 复用星邮移动网页，优先保持现有�
 - WebKit 数据仓库由「服务来源 + Hub issuer + Hub subject + 星邮业务 ID」散列确定，同一 Hub 下的多个业务号不共用仓库。
 - 原生凭据存钥匙串，网页会话使用受隔离 WebKit 仓库内的 Secure / HttpOnly cookie（路径 `/web`），不会把 token 放进 URL、JS bridge、localStorage 或 UserDefaults。退出删除该会话 cookie 和钥匙串令牌；账号自己的收藏与背景缓存继续隔离保留。
 - 仅官方 HTTPS 页面留在带登录态的 WebView；外部链接在系统浏览器打开。原生 API 不跟随重定向，也不会在网络失败后重复向其他地址提交写入请求。
-- 原生与网页之间只有一个隔离脚本世界中的「已退出」单向信号，不提供任意命令、文件或 RPC 桥接。
+- 原生与网页之间只有一个隔离脚本世界中的「登录页出现」单向信号，不提供任意命令、文件或 RPC 桥接。收到信号后重新验证服务器会话，避免网页暂时断网显示登录页时误删凭据。
 
 ## 在 Mac / GitHub Actions 构建
 
@@ -46,7 +52,7 @@ bash ios/scripts/build-unsigned.sh
 
 脚本依次执行 Swift 核心回归测试、真机 `iphoneos arm64` 编译、Mach-O 平台检查、未签名检查，再将实际 `.app` 打包成 `Payload/Starpost.app` 结构的 IPA，并生成 SHA-256 与构建元信息。不会把模拟器包当成真机 IPA。
 
-输出：`ios/build/distribution/starpost-ios-0.1.0-unsigned.ipa`。GitHub 工作流 `Build unsigned iOS client` 使用标准 `macos-15` runner，不需要 Apple 证书。工作流还会编译模拟器版本，启动 App，保存明暗登录页截图。Actions 产物保留 14 天。
+输出：`ios/build/distribution/starpost-ios-0.1.0-unsigned.ipa`。GitHub 工作流 `Build unsigned iOS client` 使用标准 `macos-15` runner，不需要 Apple 证书。手动运行时 `source_ref` 默认选择 `ios-client` 分支。工作流还会编译模拟器版本，启动 App，保存明暗登录页截图。Actions 产物保留 14 天。
 
 在 Xcode 中打开 `ios/Starpost.xcodeproj` 也可构建。若要签名运行，请由操作者自行配置团队和合法签名方式。
 

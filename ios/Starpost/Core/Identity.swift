@@ -86,6 +86,16 @@ struct LoginSession: Codable, Equatable {
         guard account.humanId == humanId, account.hubSubject == hubSubject,
               account.hubIssuer == hubIssuer else { throw ClientError.invalidIdentity }
     }
+    func webCookie(now: Date = Date()) throws -> HTTPCookie {
+        try validate(now: now)
+        let age = Int(expiration.timeIntervalSince(now))
+        let header = "starpost_session=\(accessToken); Path=/web; Secure; HttpOnly; SameSite=Strict; Max-Age=\(age)"
+        let parsed = HTTPCookie.cookies(withResponseHeaderFields: ["Set-Cookie": header], for: StarpostIdentity.origin)
+        guard parsed.count == 1, let cookie = parsed.first, cookie.name == "starpost_session",
+              cookie.isHTTPOnly, cookie.isSecure, cookie.sameSitePolicy == .sameSiteStrict,
+              cookie.path == "/web", cookie.domain == StarpostIdentity.origin.host else { throw ClientError.invalidResponse }
+        return cookie
+    }
     // The issuer, Hub subject AND Starpost business account all partition local storage.
     var storeIdentifier: UUID {
         let scope = [StarpostIdentity.origin.absoluteString, hubIssuer, hubSubject, humanId]

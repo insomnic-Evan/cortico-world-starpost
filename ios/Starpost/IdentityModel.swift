@@ -158,28 +158,32 @@ final class IdentityModel: NSObject, ObservableObject, ASWebAuthenticationPresen
     func signOut(revoke: Bool = true) async {
         let previous = candidate
         generation += 1
+        let turn = generation
+        busy = true
+        defer { if turn == generation { busy = false } }
         browser?.cancel()
         browser = nil
         session = nil
         candidate = nil
         hasSavedSession = false
         pending = nil
-        busy = false
         do { try KeychainVault.remove("session"); try KeychainVault.remove("pending") }
         catch { message = friendly(error) }
         if let previous {
             let cookies = WKWebsiteDataStore(forIdentifier: previous.storeIdentifier).httpCookieStore
             for cookie in await cookies.allCookies() where cookie.name == "starpost_session" {
-                await cookies.deleteCookie(cookie)
+                await cookies.delete(cookie)
             }
-            if revoke { await api.revoke(previous) }
+            if revoke { Task { await api.revoke(previous) } }
         }
     }
 
     func webSessionEnded(_ expected: LoginSession) async {
         guard session == expected else { return }
-        await signOut(revoke: false)
-        message = "已退出登录，请通过 FFA hub 重新登录。"
+        // The SPA also shows its login page after a network failure. Revalidate instead
+        // of treating a DOM change as authority to discard a still-valid credential.
+        session = nil
+        await verifySaved()
     }
 
     private func friendly(_ error: Error) -> String {

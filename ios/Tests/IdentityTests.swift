@@ -66,14 +66,11 @@ final class IdentityTests: XCTestCase {
         }
     }
     func testSessionCookieIsHttpOnlyAndSecure() throws {
-        let cookie = try XCTUnwrap(HTTPCookie(properties: [
-            .name: "starpost_session", .value: String(repeating: "a", count: 64),
-            .domain: "starpost.com.cn", .path: "/web", .secure: "TRUE",
-            .expires: Date().addingTimeInterval(3600),
-            HTTPCookiePropertyKey("HttpOnly"): "TRUE", HTTPCookiePropertyKey("SameSite"): "Strict"
-        ]))
+        let cookie = try session().webCookie(now: now)
         XCTAssertTrue(cookie.isHTTPOnly)
         XCTAssertTrue(cookie.isSecure)
         XCTAssertEqual(cookie.path, "/web")
+        XCTAssertEqual(cookie.sameSitePolicy, .sameSiteStrict)
+        XCTAssertThrowsError(try session(expires: now.timeIntervalSince1970 * 1000).webCookie(now: now))
     }
 }

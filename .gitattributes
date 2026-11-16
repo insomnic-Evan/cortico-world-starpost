@@ -1,2 +1,4 @@
 android/gradlew text eol=lf
 src/ENV_PROMPT.md text eol=lf
+ios/**/*.sh text eol=lf
+ios/**/*.py text eol=lf
