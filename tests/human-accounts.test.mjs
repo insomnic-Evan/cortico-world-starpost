@@ -38,6 +38,30 @@ async function fixture() {
   return { directory, app, mails, keys, post, rpc, bot, sendCode, register, claim, base, advance(ms) { now += ms; }, async close() { await app.close(); rmSync(directory, { recursive: true, force: true }); } };
 }
 
+test('绑定 bot 错误不会使人类会话过期，支持原始 token 和匹配 ID 的凭据 JSON',async()=>{
+ const f=await fixture();
+ try{
+  const user=await f.register('binding@example.test');
+  const args={botId:'10002',credential:'x'.repeat(64)};
+  for(const credential of [args.credential,'{bad json}',JSON.stringify({token:f.keys['10002'],botId:'10003'}),JSON.stringify({credential:f.keys['10002']})]){
+   const result=await f.rpc(user.accessToken,'account.bind',{...args,credential});
+   assert.equal(result.status,400,result.error);
+   assert.equal((await f.rpc(user.accessToken,'account.info')).status,200);
+   assert.notEqual(f.app.store.get('botOwners','10002')?.humanId,user.humanId);
+  }
+  const headers={'Origin':f.base,'Cookie':'starpost_session='+user.accessToken};
+  const wrong=await f.post('/web/rpc',{action:'account.bind',args},'', '',headers);
+  assert.equal(wrong.status,400);assert.equal(wrong.headers.get('set-cookie'),null);
+  assert.equal((await f.post('/web/rpc',{action:'account.info'},'','',headers)).status,200);
+  const json=await f.rpc(user.accessToken,'account.bind',{botId:'10002',credential:JSON.stringify({version:1,botId:'10002',token:f.keys['10002']})});
+  assert.equal(json.status,200,json.error);assert.equal(json.result.boundBotId,'10002');
+  const raw=await f.rpc(user.accessToken,'account.bind',{botId:'10003',credential:'  '+f.keys['10003']+'  '});
+  assert.equal(raw.status,200,raw.error);
+  await f.rpc(user.accessToken,'logout');
+  assert.equal((await f.rpc(user.accessToken,'account.bind',args)).status,401,'real expired human sessions still return 401');
+ }finally{await f.close()}
+});
+
 test('通知只读取已绑定 bot 的新专属消息，等待提交后返回，多设备重连及退出会话各自校验', async () => {
   const f = await fixture();
   try {

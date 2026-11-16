@@ -42,6 +42,12 @@ export class HubBridge {
     return state;
   }
   filterNotifications(result, state) { return { ...result, items: (result.items ?? []).filter(item => { const bot = item.botId ?? (item.kind === 'owner' ? item.target : null); return !bot || state.botAccess?.some(row => row.external_id === bot); }) }; }
+  async syncBinding(session, result) {
+    await this.sync();
+    const state = await this.status(session.human ? session.owner : session.humanId);
+    if (!state.botAccess?.some(row => row.external_id === result.boundBotId)) fail('星邮已记录绑定，但此 bot 的 Hub 管理权限未授权。已有 Hub 管理者的 bot 请由主要管理员邀请；曾释放、冻结或被托管的账号请到 FFA hub 处理。当前人类登录仍有效', 403);
+    return { ...result, hubManaged: true };
+  }
   accountInfo(result, state) { return { ...result, hubSubject: state.subject, hubIssuer: this.config.issuer, loginProvider: 'ffa-hub', identityScope: { service: 'starpost', subject: state.subject, businessId: result.humanId } }; }
   async verifyPassword(id, password) { return this.request('/v1/legacy/password', { externalId: id, password }); }
   async botClaims(token, installationId, deviceId, routeEpoch) {

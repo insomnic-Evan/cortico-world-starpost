@@ -984,7 +984,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
           result = store.transaction(() => access.call(session, input.action, privacy.decode(input.args ?? {},input.action)));
           if (hubState && input.action === 'account.info') result = hubBridge.accountInfo(result, hubState);
           if (hubState && input.action === 'owner.notifications') result = hubBridge.filterNotifications(result, hubState);
-          if (hubBridge && input.action === 'account.bind') await hubBridge.sync();
+          if (hubBridge && input.action === 'account.bind') result = await hubBridge.syncBinding(session, result);
           if (input.action === 'logout') res.setHeader('Set-Cookie', cookie('', 0));
         }
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'private, no-store' });
@@ -1023,7 +1023,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
           : access.call(access.authenticate(req.headers.authorization), input.action, privacy.decode(input.args ?? {},input.action)));
         if (hubState && input.action === 'account.info') result = hubBridge.accountInfo(result, hubState);
         if (hubBridge && req.url === '/mobile/login') { await hubBridge.sync(); await hubBridge.sessionCheck(access.authenticate(`Bearer ${result.accessToken}`), true); }
-        if (hubBridge && req.url === '/mobile/rpc' && input.action === 'account.bind') await hubBridge.sync();
+        if (hubBridge && req.url === '/mobile/rpc' && input.action === 'account.bind') result = await hubBridge.syncBinding(access.authenticate(req.headers.authorization), result);
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
         res.end(JSON.stringify({ ok: true, result: privacy.project(titles.decorate(store.hydrate(Array.isArray(result) ? { items: result } : result))) })); return;
       }
