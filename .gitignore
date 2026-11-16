@@ -15,6 +15,9 @@ coverage/
 starpost-data.json
 starpost-credential.json
 starpost-identity.json
+starpost-hub-session.json
+starpost-hub-pairing.json
+.hub-test-results.txt
 media/
 android/build/
 android/.gradle/

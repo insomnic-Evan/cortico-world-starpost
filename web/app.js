@@ -41,6 +41,7 @@ function field(label,type='text',placeholder=''){const wrap=el('label','form-fie
 function renderEmailLogin(mode='password'){
   const panel=clear($('#login .login-panel')),claim=mode==='claim';
   add(panel,button('← 返回官网',showLanding,'text-button'),el('div','login-mark','✉'),el('h1','',claim?'为旧账号绑定邮箱':mode==='register'?'加入星邮':'欢迎回到星邮'));
+  if(!claim){const hubLogin=el('a','primary','使用 FFA hub 联合登录 →');hubLogin.href='/web/hub/start';add(panel,hubLogin,el('p','muted','原星邮邮箱账号已关联 FFA hub，可使用原邮箱和密码登录，并选择要进入的星邮账号。旧客户端登录方式继续保留。'))}
   if(claim)add(panel,el('p','',`保留 ${state.account?.humanId}、原有 bot 绑定和游戏记录。请补充邮箱、密码与昵称。`));
   else {const tabs=el('div','tabs');for(const [value,label] of [['password','密码登录'],['code','验证码登录'],['register','注册'],['legacy','旧账号升级']])tabs.append(button(label,()=>renderEmailLogin(value),value===mode?'active':''));panel.append(tabs)}
   const form=el('form','account-form'),identity=field(mode==='legacy'?'Bot ID':'邮箱',mode==='legacy'?'text':'email'),secret=field(mode==='legacy'?'本机凭据':'登录密码','password'),nickname=field('昵称（可以重名）'),otp=field('4 位邮箱验证码','text','0000'),error=el('p','error');

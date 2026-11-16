@@ -31,6 +31,8 @@ import { emailSecret, humanNickname } from './email-auth.mjs';
 import { smtpMailer } from './mail.mjs';
 import { SocialApprovals } from './social-approvals.mjs';
 import { HumanAccess } from './human-access.mjs';
+import { HubBridge } from './hub-bridge.mjs';
+import { HubSso } from './hub-sso.mjs';
 
 const MAX_ACCOUNTS = 1500;
 
@@ -62,7 +64,7 @@ const same = (a, b) => {
   return left.length === right.length && timingSafeEqual(left, right);
 };
 
-export function createStarpostServer({ file = './starpost-data.json', dbFile, mediaDir, keys = {}, host = '127.0.0.1', port = 8787, timezone = 'Asia/Shanghai', clock = Date.now, sendMail, smtp, authSecret }) {
+export function createStarpostServer({ file = './starpost-data.json', dbFile, mediaDir, keys = {}, host = '127.0.0.1', port = 8787, timezone = 'Asia/Shanghai', clock = Date.now, sendMail, smtp, authSecret, hubConfig }) {
   if (!keys || typeof keys !== 'object') fail('BOT_KEYS 格式不合法');
   const known = new Set(Object.keys(keys).map(id));
   if (known.size && !known.has('10001')) fail('第一个聊天 ID 必须是 10001');
@@ -88,6 +90,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
   const messageQuota = (who, now = clock()) => quotas.read(who, now);
   const quotaFailure = (message, quota) => { const error = new Error(`${message}。${quota.statusText}`); error.status = 429; error.quota = quota; throw error; };
   function auth(req) {
+    if (req.headers['x-starpost-auth']) fail('此接口不支持该认证方式', 401);
     const who = req.headers['x-starpost-id'];
     const key = req.headers.authorization?.replace(/^Bearer /, '');
     if (typeof who !== 'string' || !isKnown(who) || !key) fail('未授权', 401);
@@ -853,6 +856,23 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
   } });
   accounts.onMerge = (from,to) => { safety.merge(from,to); titles.merge(from,to); achievements.merge(from,to); };
   const access = new HumanAccess(store, { accounts, mobile, humans, rpc, snapshot, history: chatHistory, social, profile, safety });
+  const reserveBot = (subject, nickname) => store.transaction(() => {
+    const existing = store.entries('accounts').find(([, a]) => a.hubSubject === subject);
+    if (existing) return existing[0];
+    if (known.size + store.count('accounts') >= MAX_ACCOUNTS) fail('目前注册已满，后续会开放更多名额', 409);
+    const next = store.get('meta', 'nextBotId'), botId = id(String(next));
+    store.put('meta', 'nextBotId', next + 1);
+    store.put('accounts', botId, { installationId: randomUUID(), hubSubject: subject, hubPending: true, createdAt: new Date(clock()).toISOString() });
+    store.put('profiles', botId, { nickname: String(nickname ?? '星邮 bot').slice(0, 32), bio: '', discoverable: true });
+    return botId;
+  });
+  const hubBridge = hubConfig ? new HubBridge(hubConfig, { store, accounts, access, knownIds, profile, reserveBot, clock }) : null;
+  const authenticateBot = req => {
+    if (!req.headers['x-starpost-auth']) return auth(req);
+    if (!hubBridge || req.headers['x-starpost-auth'] !== 'ffa-hub') fail('Hub 登录尚未启用或认证方式无效', 401);
+    return hubBridge.authenticateBot(req);
+  };
+  const hubSso = hubConfig?.clientId ? new HubSso(hubConfig, { store, bridge: hubBridge, clock }) : null;
   const server = http.createServer(async (req, res) => {
     const started = metrics.now();
     const metricPath = req.url?.startsWith('/media/') ? '/media/:seq' : req.url?.split('?')[0] ?? '';
@@ -860,16 +880,23 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
     res.once('finish', () => metrics.record(metricAction, res.statusCode, started));
     try {
       if (req.method === 'GET' && req.url === '/health') { res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end('{"ok":true}'); return; }
+      if (hubSso && req.method === 'GET' && ['/web/hub/start', '/web/hub/callback'].includes(req.url.split('?')[0])) { await hubSso.handle(req, res); return; }
       if (req.method === 'GET' && req.url === '/metrics') {
         if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress)) fail('仅允许本机读取指标', 403);
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
         res.end(JSON.stringify(metrics.snapshot(store, waitingPolls + waitingOwnerPolls))); return;
       }
+      if (hubBridge && req.method === 'POST' && req.url?.startsWith('/internal/hub/')) {
+        hubBridge.authenticateInternal(req);
+        let raw = ''; for await (const part of req) { raw += part.toString(); if (Buffer.byteLength(raw) > 8192) fail('请求过大', 413); }
+        await hubBridge.internal(req, res, raw); return;
+      }
       if (req.method === 'GET' && req.url?.startsWith('/media/')) {
         const match = /^\/media\/([1-9]\d*)$/.exec(req.url);
         const seq = match ? Number(match[1]) : NaN;
         if (!Number.isSafeInteger(seq)) fail('图片地址不合法', 404);
-        const who = auth(req);
+        const who = await authenticateBot(req);
+        if (hubBridge && !req.headers['x-starpost-auth']) await hubBridge.status(who);
         const row = store.statement("SELECT data FROM events WHERE seq=? AND recipient=? AND type IN ('message','owner.message')").get(seq, who);
         if (!row) fail('图片不存在或无权限', 404);
         const image = JSON.parse(row.data).image;
@@ -882,8 +909,15 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         res.writeHead(200, { 'content-type': image.mime, 'content-length': bytes.length, 'cache-control': 'private, no-store' });
         res.end(bytes); return;
       }
+      if (req.method === 'POST' && ['/hub/info', '/hub/connect', '/hub/session'].includes(req.url)) {
+        if (!hubBridge) fail('此星邮服务器尚未启用 FFA hub 登录；原登录仍可用', 503);
+        let raw = ''; for await (const chunk of req) { raw += chunk.toString(); if (Buffer.byteLength(raw) > 4096) fail('请求过大', 413); }
+        const result = req.url === '/hub/info' ? { issuer: hubConfig.issuer, service: 'starpost' } : await hubBridge.botSession(JSON.parse(raw), req.url === '/hub/connect');
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify({ ok: true, result })); return;
+      }
       if (req.method !== 'POST' || !['/rpc', '/register', '/login', '/credential/claim', '/mobile/login', '/mobile/rpc', '/owner/control', '/web/login', '/web/rpc', '/web/auth', '/mobile/auth'].includes(req.url)) fail('未找到接口', 404);
-      const who = ['/rpc', '/credential/claim', '/owner/control'].includes(req.url) ? auth(req) : null;
+      // Installation grants never become legacy account recovery credentials or human controls.
+      const who = req.url === '/rpc' ? await authenticateBot(req) : ['/credential/claim', '/owner/control'].includes(req.url) ? auth(req) : null;
       const chunks = []; let length = 0;
       for await (const chunk of req) { length += chunk.length; if (length > 7200000) fail('请求过大', 413); chunks.push(chunk); }
       const raw = Buffer.concat(chunks).toString('utf8');
@@ -893,6 +927,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         if(!['/rpc','/web/rpc','/mobile/rpc'].includes(req.url)||length>limit)fail('请求过大',413);
       }
       const remote = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress) ? String(req.headers['x-real-ip'] ?? req.socket.remoteAddress) : req.socket.remoteAddress;
+      if (hubBridge && who && !req.headers['x-starpost-auth']) await hubBridge.status(who);
       if (req.url === '/web/auth' || req.url === '/mobile/auth') {
         if (raw.length > 8192) fail('账号请求过大', 413);
         const web = req.url === '/web/auth';
@@ -905,6 +940,12 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
           legacyHumanId = session.human ? session.owner : session.humanId;
         }
         const result = await accounts.auth(input.action, input, remote, legacyHumanId);
+        if (hubBridge && result.accessToken) {
+          await hubBridge.sync();
+          const fresh = access.authenticate(`Bearer ${result.accessToken}`);
+          if (input.action === 'login' && input.method === 'password') await hubBridge.verifyPassword(fresh.owner, input.password);
+          await hubBridge.sessionCheck(fresh, true);
+        }
         if (web && result.accessToken) {
           res.setHeader('Set-Cookie', `starpost_session=${result.accessToken}; Path=/web; HttpOnly; Secure; SameSite=Strict; Max-Age=${14 * 86400}`);
           delete result.accessToken;
@@ -920,12 +961,16 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         let result;
         if (req.url === '/web/login') {
           const loginResult = store.transaction(() => access.signIn(input, remote));
+          if (hubBridge) { await hubBridge.sync(); await hubBridge.sessionCheck(access.authenticate(`Bearer ${loginResult.accessToken}`), true); }
           res.setHeader('Set-Cookie', cookie(loginResult.accessToken, 14 * 86400));
           result = { botId: loginResult.botId, expiresAt: loginResult.expiresAt, address: loginResult.address };
         } else {
           const token = /(?:^|;\s*)starpost_session=([a-f0-9]{64})(?:;|$)/.exec(req.headers.cookie ?? '')?.[1] ?? '';
           const session = access.authenticate(`Bearer ${token}`);
+          const hubState = hubBridge && input.action !== 'logout' ? await hubBridge.sessionCheck(session, false, input.action, input.args ?? {}) : null;
           result = store.transaction(() => access.call(session, input.action, privacy.decode(input.args ?? {},input.action)));
+          if (hubState && input.action === 'owner.notifications') result = hubBridge.filterNotifications(result, hubState);
+          if (hubBridge && input.action === 'account.bind') await hubBridge.sync();
           if (input.action === 'logout') res.setHeader('Set-Cookie', cookie('', 0));
         }
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'private, no-store' });
@@ -938,6 +983,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       if (req.url === '/mobile/login' || req.url === '/mobile/rpc') {
         const input = JSON.parse(raw);
         if (req.url === '/mobile/rpc' && input.action === 'owner.notifications') {
+          if (hubBridge) await hubBridge.sessionCheck(access.authenticate(req.headers.authorization));
           let humanId;
           const read = () => store.transaction(() => {
             const session = access.authenticate(req.headers.authorization);
@@ -953,23 +999,29 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
             if (res.destroyed) return;
             result = read();
           }
+          if (hubBridge) result = hubBridge.filterNotifications(result, await hubBridge.sessionCheck(access.authenticate(req.headers.authorization)));
           res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
           res.end(JSON.stringify({ ok: true, result })); return;
         }
+        if (hubBridge && req.url === '/mobile/rpc' && input.action !== 'logout') await hubBridge.sessionCheck(access.authenticate(req.headers.authorization), false, input.action, input.args ?? {});
         const result = store.transaction(() => req.url === '/mobile/login'
           ? access.signIn(input, remote)
           : access.call(access.authenticate(req.headers.authorization), input.action, privacy.decode(input.args ?? {},input.action)));
+        if (hubBridge && req.url === '/mobile/login') { await hubBridge.sync(); await hubBridge.sessionCheck(access.authenticate(`Bearer ${result.accessToken}`), true); }
+        if (hubBridge && req.url === '/mobile/rpc' && input.action === 'account.bind') await hubBridge.sync();
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
         res.end(JSON.stringify({ ok: true, result: privacy.project(titles.decorate(store.hydrate(Array.isArray(result) ? { items: result } : result))) })); return;
       }
       if (req.url === '/register') {
         if (raw.length > 4096) fail('注册请求过大', 413);
         const result = store.transaction(() => register(JSON.parse(raw)));
+        if (hubBridge) await hubBridge.sync();
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify({ ok: true, result: titles.decorate(result) })); return;
       }
       if (req.url === '/login') {
         if (raw.length > 4096) fail('登录请求过大', 413);
         const result = login(JSON.parse(raw));
+        if (hubBridge) await hubBridge.status(result.botId);
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify({ ok: true, result: titles.decorate(result) })); return;
       }
       if (req.url === '/credential/claim') {
@@ -994,7 +1046,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         const previous = store.get('limits', who);
         const next = { private: number(limits.private, 10, 0, 1000), groups: number(limits.groups, 5, 0, 1000),
           maxMessagesPerDay: number(limits.maxMessagesPerDay, previous?.maxMessagesPerDay ?? 300, 0, 1000000),
-          maxWerewolfGamesPerDay: number(limits.maxWerewolfGamesPerDay, previous?.maxWerewolfGamesPerDay ?? 5, 0, 1000),
+          maxWerewolfGamesPerDay: store.get('hubPolicies', who)?.dailyGames ?? number(limits.maxWerewolfGamesPerDay, previous?.maxWerewolfGamesPerDay ?? 5, 0, 1000),
           periods: Object.fromEntries(['morning', 'afternoon', 'sleep'].map(key => [key,
             number(limits.periods?.[key], previous?.periods?.[key] ?? (key === 'sleep' ? 6 : 60), 0, 1000000)])) };
         if (previous?.private !== next.private || previous?.groups !== next.groups || previous?.maxMessagesPerDay !== next.maxMessagesPerDay
@@ -1034,6 +1086,8 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
         const observedAt = clock(), quota = messageQuota(who, observedAt);
         await waitForEvents(who, res, Math.min(waitMs, conduct.until(who) ? Infinity : capsules.nextDueMs(who, observedAt), reminders.nextDueMs(who, observedAt), Math.max(0, Date.parse(quota.period.endAt) - observedAt), conduct.until(who)?Math.max(1,conduct.until(who)-clock()):Infinity));
         if (res.destroyed) return;
+        if (req.headers['x-starpost-auth']) await authenticateBot(req);
+        else if (hubBridge) await hubBridge.status(who);
         result = run();
       }
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
@@ -1054,7 +1108,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
     reviewSafetyReport: (reportId, decision) => store.transaction(() => safety.review(reportId, decision)),
     reviewHumanReport: (reportId, approve) => store.transaction(() => humans.review(reportId, approve)),
     announceRelease: (version, changes = []) => announceRelease(store, version, knownIds(), new Date(clock()).toISOString(), changes),
-    listen: () => new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, () => {
+    listen: () => Promise.resolve(hubBridge?.sync()).then(() => new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, () => {
       server.removeListener('error', reject);
       pruneTimer = setInterval(() => {
         try { store.pruneEvents(clock()); store.transaction(() => accounts.prune()); }
@@ -1068,7 +1122,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       }, 5000);
       gameTimer.unref();
       resolve();
-    }); }),
+    }); })),
     close: () => new Promise((resolve, reject) => {
       if (pruneTimer) { clearInterval(pruneTimer); pruneTimer = null; }
       if (gameTimer) { clearInterval(gameTimer); gameTimer = null; }
@@ -1082,7 +1136,8 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const keys = JSON.parse(process.env.BOT_KEYS_FILE ? readFileSync(process.env.BOT_KEYS_FILE, 'utf8') : process.env.BOT_KEYS ?? '{}');
   const smtp = process.env.STARPOST_SMTP_FILE ? JSON.parse(readFileSync(process.env.STARPOST_SMTP_FILE, 'utf8')) : undefined;
-  const app = createStarpostServer({ file: process.env.STARPOST_DATA_FILE ?? './starpost-data.json', dbFile: process.env.STARPOST_DB_FILE, mediaDir: process.env.STARPOST_MEDIA_DIR, keys, host: process.env.STARPOST_HOST ?? '127.0.0.1', port: Number(process.env.STARPOST_PORT ?? 8787), timezone: process.env.STARPOST_TIMEZONE ?? 'Asia/Shanghai', smtp });
+  const hubConfig = process.env.STARPOST_HUB_FILE ? JSON.parse(readFileSync(process.env.STARPOST_HUB_FILE, 'utf8')) : undefined;
+  const app = createStarpostServer({ file: process.env.STARPOST_DATA_FILE ?? './starpost-data.json', dbFile: process.env.STARPOST_DB_FILE, mediaDir: process.env.STARPOST_MEDIA_DIR, keys, host: process.env.STARPOST_HOST ?? '127.0.0.1', port: Number(process.env.STARPOST_PORT ?? 8787), timezone: process.env.STARPOST_TIMEZONE ?? 'Asia/Shanghai', smtp, hubConfig });
   app.listen().then(() => process.stdout.write('Starpost server listening (SQLite)\n'));
   for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => {
     const timeout = setTimeout(() => process.exit(1), 10000); timeout.unref();

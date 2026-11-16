@@ -211,6 +211,35 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
   const official = ui.h('a', null, '星邮官网 · 网页端登录'); official.href = 'https://starpost.com.cn'; official.target = '_blank'; official.rel = 'noopener noreferrer'; official.style.marginRight = '1.2rem';
   const credentials = ui.h('div','sp-credentials'); credentials.style.overflowWrap = 'anywhere'; credentials.style.userSelect = 'text';
   mobile.append(official, apk, credentials);
+  const hubBox = ui.h('details');
+  const hubSummary = ui.h('summary', null, 'FFA hub 登录 · 保留当前账号');
+  const hubNote = ui.h('p', null, '由人类打开账号中心，核对短码并选择 bot。已有登录不会自动切换；管理员将本安装设为主运行端后，点击完成登录。');
+  const hubInfo = ui.msgline('');
+  const hubLink = ui.h('a', null, '打开 FFA hub 完成配对'); hubLink.target = '_blank'; hubLink.rel = 'noopener noreferrer'; hubLink.hidden = true;
+  let hubBusy = false;
+  async function hubAction(method: string) {
+    if (hubBusy) return; hubBusy = true;
+    try {
+      const result = await ctx.invoke<any>(method, method === 'hubBegin' ? ['星邮 Cortico 运行端'] : []);
+      hubInfo.textContent = result.message || (result.status === 'pending' ? '等待你在 FFA hub 确认配对。' : result.status === 'connected' ? 'Hub 登录成功，沿用原星邮 ID 和记录。' : '');
+      await refreshHub(); if (result.status === 'connected') { shown = ''; await refresh(); }
+    } catch (e) { hubInfo.textContent = String(e); }
+    finally { hubBusy = false; }
+  }
+  async function refreshHub() {
+    const result = await ctx.invoke<any>('hubStatus');
+    hubSummary.textContent = result.mode === 'hub' ? `FFA hub 已登录 · ${result.botId}${result.expired ? ' · 授权到期' : ''}` : 'FFA hub 登录 · 保留当前账号';
+    hubLink.hidden = !result.pending;
+    if (result.pending) {
+      const url = new URL(result.pending.verificationUri);
+      if (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname))) throw Error('配对地址不合法');
+      hubLink.href = url.href; hubLink.textContent = `打开账号中心 · 核对短码 ${result.pending.shortCode}`;
+    }
+  }
+  const hubButtons = ui.rowbar();
+  hubButtons.append(ui.button('开始 / 重新授权', { onClick: () => { void hubAction('hubBegin'); } }), ui.button('已确认，完成登录', { onClick: () => { void hubAction('hubFinish'); } }), ui.button('取消配对', { onClick: () => { void hubAction('hubCancel'); } }));
+  hubBox.append(hubSummary, hubNote, hubLink, hubButtons, hubInfo); mobile.append(hubBox);
+  void refreshHub().catch(() => { hubInfo.textContent = '当前客户端暂不支持 Hub 配对'; });
   const account = ui.h('div');
   const content = ui.h('div');
   const navigation=ui.h('nav','sp-nav');navigation.setAttribute('aria-label','星邮功能');
@@ -228,6 +257,12 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
     finally { safetyBusy = false; }
   }
   async function refreshSafety() {
+    const auth = await ctx.invoke<{mode:string}>('hubStatus');
+    if (auth.mode === 'hub') {
+      safety.body.replaceChildren();
+      line(ctx, safety.body, '此安装使用 bot 连接授权。青少年模式与每日游戏额度请由管理员在 FFA hub 设置；好友和入群审批请使用自己的星邮网页或手机账号。');
+      return;
+    }
     const data = await ctx.invoke<{enabled:boolean;suspendedUntil:number;pending:Array<{id:string;actor:string;action:string;approved:boolean;targets:Array<{label:string}>}>;friends:Array<{botId:string;nickname:string}>;groups:Array<{id:string;name:string}>}>('teenControl',['status',{}]);
     if(ctx.signal.aborted)return;
     safety.body.replaceChildren();
@@ -603,8 +638,8 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
     try {
       const identity = await ctx.invoke<{ registered: boolean; botId: string | null; recoveryHint?: string }>('status');
       try {
-        const info = await ctx.invoke<{ botId: string; credential: string }>('mobileLoginInfo');
-        credentials.textContent = info.botId ? `绑定 Bot ID：${info.botId}\n凭据：${info.credential}\n手机和网页端使用邮箱登录，再在设置中绑定此 bot。` : '注册后在此显示绑定 bot 所需的 ID 和凭据';
+        const info = await ctx.invoke<{ botId: string; credential: string; authMode?: string; hubUrl?: string }>('mobileLoginInfo');
+        credentials.textContent = info.authMode === 'hub' ? `星邮 ID：${info.botId}\n通过 FFA hub 登录，安装凭据仅保存在本机。管理员与主运行端请到 ${info.hubUrl} 管理。` : info.botId ? `绑定 Bot ID：${info.botId}\n凭据：${info.credential}\n手机和网页端使用邮箱登录，再在设置中绑定此 bot。` : '注册后在此显示绑定 bot 所需的 ID 和凭据';
         credentials.style.whiteSpace = 'pre-wrap';
       } catch { credentials.textContent = ''; }
       if (!identity.registered) { showRegistration(); status.textContent = identity.recoveryHint || '可注册新账号或恢复已有账号'; return; }
