@@ -1,6 +1,11 @@
 name: Build unsigned iOS client
 on:
   workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Source branch or commit containing the iOS project
+        default: ios-client
+        required: true
   push:
     branches: ['ios-client']
     paths: ['ios/**', '.github/workflows/ios-unsigned.yml']
@@ -15,6 +20,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.ref }}
       - name: Build and validate unsigned arm64 device app
         run: bash ios/scripts/build-unsigned.sh
       - name: Build simulator app and capture login screen
