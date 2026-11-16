@@ -44,4 +44,4 @@ CooDock 关联记录使用自身服务命名空间，星邮聊天数据仍以 Hu
 
 网页浏览器测试通过：空称呼发送、首次提示持久化、桌面与手机宽度无横向溢出。星邮 Android Kotlin 编译通过；CooDock companion APK 构建与 workbench Kotlin/Java 编译通过。尚未进行 Android 真机操作验收。
 
-2026-11-17 服务端与网页已部署，CooDock 服务与 OIDC 客户端已登记。没有更改 npm 版本，也没有发布新的星邮正式 APK；Android 的选填提示改动在源码中，随下次 APK 发布生效。CooDock 交付本地源码和调试 APK，由其开发者合入发布。
+2026-11-17 服务端与网页已部署，CooDock 服务与 OIDC 客户端已登记。本轮随星邮 0.35.0 和 Android 1.15.0 正式发布，Android 已包含选填称呼提示。CooDock 交付本地源码和调试 APK，由其开发者合入发布。
