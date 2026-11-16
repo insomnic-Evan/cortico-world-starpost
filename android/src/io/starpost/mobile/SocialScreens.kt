@@ -101,16 +101,22 @@ internal fun conversationName(data:JSONObject,id:String,kind:String):String {
     Button(enabled=!s.working&&selected.isNotEmpty()&&(s.route.page=="invite"||name.isNotBlank()),onClick={if(s.route.page=="invite"){if(selected.size!=1)ui.vm.notice("请一次选择一位好友")else ui.vm.perform("social.group.invite",obj("groupId" to s.route.id,"botId" to selected.first()),Route("socialHistory",s.route.id,"group"))}else ui.vm.perform("social.group.create",obj("name" to name,"members" to JSONArray(selected)),Route())}){Text(if(s.route.page=="invite")"邀请所选好友" else "创建群聊 · ${selected.size} 位好友")}
 }}
 
-@Composable private fun ChatScreen(ui:UiActions,s:ClientState){
-    val route=s.route;val botReadOnly=route.page=="history";val readOnly=botReadOnly||route.page=="blockedHistory";val owner=route.page=="owner";val messages=s.data.rows("messages");val key="${s.account.str("humanId")}:${s.account.str("botId")}:${route.page}:${route.kind}:${route.id}"
+@Composable internal fun OwnerAddressPrompt(ui:UiActions,s:ClientState){
+    if(!s.signedIn||s.route.page!="owner"||s.account.str("botId").isEmpty())return
+    val key="${s.account.str("humanId")}:${s.account.str("botId")}"
     var askAddress by remember(key){mutableStateOf(false)}
     var optionalAddress by remember(key){mutableStateOf(s.account.str("address"))}
-    LaunchedEffect(key,s.account.optBoolean("addressPrompted"),s.loading){if(owner&&!s.account.optBoolean("addressPrompted")&&!s.loading)askAddress=true}
+    LaunchedEffect(key,s.account.optBoolean("addressPrompted"),s.account.str("address"),s.loading){if(!s.account.optBoolean("addressPrompted")&&s.account.str("address").isBlank()&&!s.loading)askAddress=true}
     if(askAddress)AlertDialog(onDismissRequest={askAddress=false;ui.vm.perform("owner.address",obj("address" to ""))},
         title={Text("希望 bot 怎样称呼你？")},
         text={Column{Text("选填。留空时只标注 Hub 账号和项目来源，不注入称呼。");OutlinedTextField(optionalAddress,{optionalAddress=it},label={Text("称呼（可留空）")},singleLine=true)}},
         confirmButton={TextButton(enabled=!s.working,onClick={ui.vm.perform("owner.address",obj("address" to optionalAddress)){askAddress=false}}){Text("保存")}},
         dismissButton={TextButton(enabled=!s.working,onClick={ui.vm.perform("owner.address",obj("address" to "")){askAddress=false}}){Text("不填写")}})
+}
+
+@Composable private fun ChatScreen(ui:UiActions,s:ClientState){
+    val route=s.route;val botReadOnly=route.page=="history";val readOnly=botReadOnly||route.page=="blockedHistory";val owner=route.page=="owner";val messages=s.data.rows("messages");val key="${s.account.str("humanId")}:${s.account.str("botId")}:${route.page}:${route.kind}:${route.id}"
+    OwnerAddressPrompt(ui,s)
     var draft by rememberSaveable(key){mutableStateOf(ui.vm.draft())};var quote by remember(key){mutableStateOf<JSONObject?>(null)}
     var menu by remember(key){mutableStateOf<JSONObject?>(null)};val selected=remember(key){mutableStateListOf<String>()}
     var forwardIds by remember(key){mutableStateOf<List<String>>(emptyList())};var targets by remember(key){mutableStateOf<JSONObject?>(null)};var record by remember(key){mutableStateOf<JSONObject?>(null)}

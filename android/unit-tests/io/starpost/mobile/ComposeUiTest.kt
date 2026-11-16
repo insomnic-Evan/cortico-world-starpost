@@ -79,7 +79,7 @@ class ComposeUiTest {
     }
     @get:Rule val compose=createComposeRule()
     private fun client()=StarpostClient(ApplicationProvider.getApplicationContext<Application>())
-    private val account get()=obj("humanId" to "10003H","nickname" to "星河访客","email" to "hello@example.com","botId" to "10001","bots" to JSONArray().put(obj("botId" to "10001","nickname" to "陈玥汐")))
+    private val account get()=obj("addressPrompted" to true,"humanId" to "10003H","nickname" to "星河访客","email" to "hello@example.com","botId" to "10001","bots" to JSONArray().put(obj("botId" to "10001","nickname" to "陈玥汐")))
     private fun shot(name:String){val file=File("../.deployment/compose/screenshots/$name.png");file.parentFile.mkdirs();compose.onRoot().captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG,100,file.outputStream())}
     @Test fun titleLibraryKeepsMultipleAwardsAndOnlyOffersEquipOrRemove(){
         val vm=client();val ui=UiActions(vm);val theme=mutableStateOf("light")
@@ -200,11 +200,11 @@ class ComposeUiTest {
         compose.runOnIdle{org.junit.Assert.assertEquals("years",vm.capsuleDraft().unit);org.junit.Assert.assertEquals("未来的我，希望你仍然记得今天。",vm.capsuleDraft().text);dark.value=true}
         compose.onNodeWithText("指定日期").performScrollTo().performClick()
         compose.onNodeWithText("开启时间（北京时间）").performScrollTo().performTextInput("2035-01-01 09:00")
-        compose.onNodeWithContentDescription("添加到时间胶囊").performScrollTo().assertIsEnabled()
+        compose.onNodeWithContentDescription("图片与拍照").performScrollTo().assertIsEnabled()
         compose.runOnIdle{repeat(3){vm.capsuleDraft().images.add(obj("mime" to "image/png","base64" to "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNIOfHsPwAGuAMSOUNQWgAAAABJRU5ErkJggg=="))}}
-        compose.onNodeWithContentDescription("添加到时间胶囊").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithContentDescription("图片与拍照").performScrollTo().assertIsNotEnabled()
         compose.onNodeWithText("移除图片 3").performScrollTo().performClick()
-        compose.onNodeWithContentDescription("添加到时间胶囊").performScrollTo().assertIsEnabled();shot("android-capsule-compose-dark")
+        compose.onNodeWithContentDescription("图片与拍照").performScrollTo().assertIsEnabled();shot("android-capsule-compose-dark")
         compose.runOnIdle{state.value=state.value.copy(error="网络暂时不可用")}
         compose.onNodeWithText("未来的我，希望你仍然记得今天。").assertExists()
     }
@@ -278,9 +278,9 @@ class ComposeUiTest {
         compose.onNode(hasSetTextAction()).performTextInput("今天的小事，留在星邮。")
         compose.runOnIdle{org.junit.Assert.assertEquals("今天的小事，留在星邮。",vm.communityDraft("post").text)}
         compose.runOnIdle{state.value=state.value.copy(error="操作过于频繁，请稍后重试");dark.value=true}
-        compose.onNodeWithText("今天的小事，留在星邮。").assertExists();compose.onNodeWithContentDescription("添加到动态").assertExists();shot("android-post-compose-dark")
+        compose.onNodeWithText("今天的小事，留在星邮。").assertExists();compose.onNodeWithContentDescription("图片与拍照").assertExists();shot("android-post-compose-dark")
         compose.runOnIdle{state.value=state.value.copy(route=Route("throwBottle"),error="")}
-        compose.onNodeWithText("今天的小事，留在星邮。").assertDoesNotExist();compose.onNodeWithContentDescription("添加到动态").assertDoesNotExist()
+        compose.onNodeWithText("今天的小事，留在星邮。").assertDoesNotExist();compose.onNodeWithContentDescription("图片与拍照").assertDoesNotExist()
         compose.runOnIdle{state.value=state.value.copy(route=Route("newPost"))};compose.onNodeWithText("今天的小事，留在星邮。").assertExists()
     }
     @Test fun postRepliesAndDeleteBelongToHumanAuthorOnly(){
@@ -328,11 +328,11 @@ class ComposeUiTest {
         compose.onNodeWithText("这是今天拍到的天空").assertDoesNotExist();compose.onNodeWithText("查看完整聊天记录 →").performClick();compose.onNodeWithText("这是今天拍到的天空").assertExists();compose.onNodeWithText("完整聊天记录").assertExists();shot("android-forward-record")
     }
     @Test fun customBackgroundKeepsDraftAcrossThemesAndCanBeReset(){
-        val context=ApplicationProvider.getApplicationContext<Application>();val file=File(context.filesDir,"appearance-background.jpg")
+        val context=ApplicationProvider.getApplicationContext<Application>();val vm=client();val scope=vm.contentScope();val file=File(context.filesDir,"appearance-background-$scope.jpg")
         val bitmap=Bitmap.createBitmap(400,800,Bitmap.Config.ARGB_8888)
         android.graphics.Canvas(bitmap).drawPaint(android.graphics.Paint().apply{shader=android.graphics.LinearGradient(0f,0f,400f,800f,intArrayOf(0xff45a8d5.toInt(),0xffe8bbce.toInt(),0xff5955a0.toInt()),null,android.graphics.Shader.TileMode.CLAMP)})
         file.outputStream().use{bitmap.compress(Bitmap.CompressFormat.JPEG,85,it)};bitmap.recycle()
-        val theme=androidx.compose.runtime.mutableStateOf("light");val vm=client()
+        val theme=androidx.compose.runtime.mutableStateOf("light")
         val social=obj("friendProfiles" to JSONArray().put(obj("botId" to "10005H","nickname" to "小星")))
         val data=obj("messages" to JSONArray().put(obj("id" to "background-message","sender" to "10005H","senderNickname" to "小星","text" to "在星邮，分享今天的故事。","at" to "2026-11-02T10:00:00Z")))
         val route=androidx.compose.runtime.mutableStateOf(Route("socialHistory","10005H"))
@@ -344,7 +344,7 @@ class ComposeUiTest {
             compose.onNodeWithText("没有发送的草稿").assertExists();shot("android-background-dark")
             compose.runOnIdle{route.value=Route("settings")};compose.onNodeWithText("恢复默认背景").performScrollTo().performClick()
             compose.waitUntil(5000){!file.exists()};compose.onNodeWithText("恢复默认背景").assertDoesNotExist()
-        }finally{file.delete();context.getSharedPreferences("starpost-appearance",0).edit().clear().commit()}
+        }finally{file.delete();context.getSharedPreferences("starpost-appearance-$scope",0).edit().clear().commit()}
     }
     @Test fun personalProfileShowsSocialSectionsInsteadOfGames(){
         val vm=client();compose.setContent{StarpostTheme("light",false){StarpostApp(vm,ClientState(starting=false,signedIn=true,account=account,data=obj("botId" to "10005H","nickname" to "朋友","bio" to "简介"),route=Route("profile","10005H","social")))}}

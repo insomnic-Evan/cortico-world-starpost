@@ -732,6 +732,20 @@ test('图片、引用、合并转发卡片与两分钟撤回：作者不可伪�
 });
 
 
+test('旧版已填写的称呼自动沿用，升级不再询问，主动清空后也不恢复旧值',async()=>{
+ const f=await fixture();try{
+  f.app.store.put('mobileProfile','10001',{address:'旅人'});
+  const user=await f.claim('10001','existing-address@example.test');
+  const info=(await f.rpc(user.accessToken,'account.info')).result;
+  assert.equal(info.address,'旅人');assert.equal(info.addressPrompted,true);
+  assert.equal((await f.rpc(user.accessToken,'owner.send',{text:'沿用旧称呼'})).ok,true);
+  assert.match((await f.rpc(user.accessToken,'owner.history')).result.messages.at(-1).prefix,/用户填写的称呼："旅人"/);
+  assert.equal((await f.rpc(user.accessToken,'owner.address',{address:''})).ok,true);
+  const cleared=(await f.rpc(user.accessToken,'account.info')).result;
+  assert.equal(cleared.address,'');assert.equal(cleared.addressPrompted,true);
+ }finally{await f.close()}
+});
+
 test('专属频道称呼可留空，来源取登录会话，参数不能冒充 Hub 身份或项目',async()=>{
  const f=await fixture();try{
   const user=await f.claim('10001','origin@example.test');const key=hashToken(user.accessToken);
