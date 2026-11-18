@@ -21,7 +21,7 @@ export function makeAndroidUpdate({ apk, badging, gradle, tag, notes }) {
   return {
     schema: 1, packageName, versionCode, versionName, minSdk,
     bytes: apk.length, sha256: createHash('sha256').update(apk).digest('hex'),
-    apkUrl: `https://github.com/hth768/cortico-world-starpost/releases/download/${tag}/starpost-android.apk`,
+    apkUrl: `https://8.148.13.225/downloads/starpost-android-${versionName}.apk`,
     notes: String(notes).trim().slice(0, 6000),
   };
 }

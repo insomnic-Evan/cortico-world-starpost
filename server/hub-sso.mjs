@@ -83,7 +83,7 @@ export class HubSso {
       const client = this.client(sourceProject);
       const state = random(), nonce = random(), verifier = random(), browser = random();
       this.store.transaction(() => { this.store.statement("DELETE FROM documents WHERE collection IN ('hubSsoFlows','hubSsoChoices') AND at<?").run(new Date(this.clock()).toISOString()); this.store.put('hubSsoFlows', hash(state), { browser: hash(browser), nonce, verifier, mobile, sourceProject, externalId: u.searchParams.get('account'), expiresAt: this.clock() + 600000, at: new Date(this.clock() + 600000).toISOString() }); });
-      const auth = new URL(c.issuer + '/auth'); auth.search = new URLSearchParams({ client_id: client.clientId, response_type: 'code', redirect_uri: c.publicOrigin + '/web/hub/callback', scope: 'openid profile email', state, nonce, code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256', prompt: 'login consent' }).toString();
+      const auth = new URL((c.authorizationOrigin ?? c.issuer) + '/auth'); auth.search = new URLSearchParams({ client_id: client.clientId, response_type: 'code', redirect_uri: c.publicOrigin + '/web/hub/callback', scope: 'openid profile email', state, nonce, code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256', prompt: 'login consent' }).toString();
       res.writeHead(303, { Location: auth.href, 'Set-Cookie': cookie(browser, 600), 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' }); res.end(); return;
     }
     const browser = (req.headers.cookie ?? '').split(';').map(x => x.trim()).find(x => x.startsWith(cookieName + '='))?.slice(cookieName.length + 1);

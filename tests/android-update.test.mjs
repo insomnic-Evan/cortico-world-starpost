@@ -5,11 +5,11 @@ import { makeAndroidUpdate } from '../scripts/build-android-update.mjs';
 
 const input = { apk: Buffer.from('test-apk'), badging: "package: name='io.starpost.mobile' versionCode='12' versionName='1.2.2'\nsdkVersion:'26'",
   gradle: 'versionCode = 12\nversionName = "1.2.2"\nminSdk = 26', tag: 'v0.21.0', notes: '  更新内容\n- 一键更新  ' };
-test('Android update metadata uses APK version and immutable tagged assets', () => {
+test('Android update metadata uses APK version and immutable versioned IP assets', () => {
   const manifest = makeAndroidUpdate(input);
   assert.equal(manifest.versionName, '1.2.2');
   assert.equal(manifest.versionCode, 12);
-  assert.equal(manifest.apkUrl, 'https://github.com/hth768/cortico-world-starpost/releases/download/v0.21.0/starpost-android.apk');
+  assert.equal(manifest.apkUrl, 'https://8.148.13.225/downloads/starpost-android-1.2.2.apk');
   assert.equal(manifest.sha256, createHash('sha256').update(input.apk).digest('hex'));
   assert.equal(manifest.bytes, input.apk.length);
   assert.equal(manifest.notes, '更新内容\n- 一键更新');

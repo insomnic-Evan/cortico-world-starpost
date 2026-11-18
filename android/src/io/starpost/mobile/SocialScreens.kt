@@ -175,7 +175,7 @@ internal fun conversationName(data:JSONObject,id:String,kind:String):String {
     if(account.str("hubSubject").isNotEmpty()){
         SectionTitle("FFA hub 账号",account.str("hubSubject"))
         Text("此 Hub 身份拥有当前星邮业务号，好友与聊天记录按业务号分别保存。",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-        TextButton(onClick={runCatching{hubBrowser.openUri(account.str("hubIssuer","https://ffahub.net"))}.onFailure{ui.vm.notice("无法打开账号中心")}}){Text("管理 FFA hub 账号")}
+        TextButton(onClick={runCatching{hubBrowser.openUri(hubTransport(account.str("hubUrl",account.str("hubIssuer","https://ffahub.net"))))}.onFailure{ui.vm.notice("无法打开账号中心")}}){Text("管理 FFA hub 账号")}
     }
     Surface(shape=RoundedCornerShape(32.dp),color=MaterialTheme.colorScheme.primaryContainer,modifier=Modifier.fillMaxWidth()){Column(Modifier.padding(24.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){Avatar(account.str("nickname"),avatarId=account.str("humanId"),avatarVersion=account.str("avatarVersion"));Text(account.str("nickname"),style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold);AccountTitleBadge(account.str("accountTitle"),style=account.optJSONObject("accountTitleStyle"));Text(account.str("humanId"));Text(account.str("email"),style=MaterialTheme.typography.bodyMedium)}}
     AvatarEditor(ui,account.str("avatarVersion"))

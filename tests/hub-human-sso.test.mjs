@@ -14,6 +14,18 @@ test('Hub browser login canonicalizes alternate host before issuing browser stat
  const f=setup(),res=f.response();await f.sso.handle({url:'/web/hub/start?account=10001H',headers:{host:'8.148.13.225'}},res);
  assert.equal(res.status,303);assert.equal(res.headers.Location,'https://starpost.com.cn/web/hub/start?account=10001H');assert.equal(res.headers['Set-Cookie'],undefined);
 });
+
+test('temporary IP authorization endpoint does not change the identity issuer or return through a domain',async()=>{
+ const f=setup();
+ f.sso.config.publicOrigin='https://8.148.13.225';
+ f.sso.config.authorizationOrigin='https://8.148.13.225:8443';
+ const res=f.response();await f.sso.handle({url:'/web/hub/start',headers:{host:'8.148.13.225'}},res);
+ const target=new URL(res.headers.Location);
+ assert.equal(target.origin,'https://8.148.13.225:8443');
+ assert.equal(target.searchParams.get('redirect_uri'),'https://8.148.13.225/web/hub/callback');
+ assert.equal(f.sso.config.issuer,'https://ffahub.net');
+ assert.ok(target.searchParams.get('state'));assert.ok(target.searchParams.get('nonce'));
+});
 test('Native authorization expires and only one concurrent browser approval wins',async()=>{
  const f=setup(),verifier='a'.repeat(43),challenge=createHash('sha256').update(verifier).digest('base64url');
  const flow=await f.sso.mobile('start',{challenge},'test');

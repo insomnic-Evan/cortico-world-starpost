@@ -32,7 +32,7 @@ export interface StarpostConfigSection {
 }
 
 export const STARPOST_DEFAULTS: StarpostConfigSection = {
-  enabled: false, receiveMode: 'mixed', serverUrl: 'https://starpost.com.cn', hubUrl: 'https://ffahub.net', botId: '', tokenSecret: 'CORTICO_STARPOST_TOKEN', emojiDir: '',
+  enabled: false, receiveMode: 'mixed', serverUrl: 'https://8.148.13.225', hubUrl: 'https://8.148.13.225:8443', botId: '', tokenSecret: 'CORTICO_STARPOST_TOKEN', emojiDir: '',
   sticker: { enabled: true, maxFiles: 10000, qqIndexFile: '' },
   maxPrivateChats: 10, maxGroups: 5, maxMessagesPerDay: 300, maxWerewolfGamesPerDay: 5,
   periodLimits: { morning: 60, afternoon: 60, sleep: 6 },
@@ -66,7 +66,7 @@ export const STARPOST_CONFIG_GROUP: ConfigGroup = {
     'worlds.starpost.speech.ttsProtocol': {type:'string',enum:['openai','json'],title:'TTS 接口协议',description:'openai：POST input/model/voice/response_format，返回音频；json：POST text/model/voice，返回 {audio}。'},
     'worlds.starpost.receiveMode': { type: 'string', enum: ['active', 'passive', 'mixed'], title: '内容接收模式', description: 'active 日常内容只提醒，正文由 bot 主动查看；passive 在线聊天合批投递；mixed 两者均可（默认）。主动模式的广场、动态和观战更新只汇总数量与 ID，不含预览。所有模式离线积压聊天只提醒；参赛游戏和自己的手机/网页用户消息实时投递。修改后重启 World。' },
     'worlds.starpost.serverUrl': { type: 'string', title: '中转服务地址', description: '建议使用 HTTPS。修改后重启 World。' },
-    'worlds.starpost.hubUrl': { type: 'string', title: 'FFA hub 账号中心', description: '默认 https://ffahub.net。由人类在星邮页面发起浏览器配对；已有账号不会自动退出或切换。修改后重启 World。' },
+    'worlds.starpost.hubUrl': { type: 'string', title: 'FFA hub 账号中心', description: '临时使用 https://8.148.13.225:8443，保留原 Hub 身份；旧官方域名配置自动走 IP 连接。由人类发起浏览器配对，已有登录保留。修改后重启 World。' },
     'worlds.starpost.botId': { type: 'string', title: '旧版手工账号 ID（通常留空）', description: '仅用于最早期手工配置。重装或迁移请在星邮初始页选择“恢复已有账号”，填写原 ID 并粘贴原凭据或选择凭据文件；不需要在这里填 ID。已保存的凭据优先。' },
     'worlds.starpost.tokenSecret': { type: 'string', title: '旧版密钥环境变量名', description: '默认 CORTICO_STARPOST_TOKEN，仅用于最早期手工账号的 .env 密钥；这里不能填写凭据本身。重装请使用星邮页面的“恢复已有账号”。' },
     'worlds.starpost.emojiDir': { type: 'string', title: '表情包文件夹', description: '留空使用扩展内 emoji 文件夹，也可自行选择图片目录。收到的聊天表情包自动收集到此目录，星邮独立保存标签和备注。' },
@@ -86,8 +86,8 @@ export const STARPOST_CONFIG_GROUP: ConfigGroup = {
     'worlds.starpost.antiLoop.idleToEndSec': { type: 'integer', minimum: 0, maximum: 86400, title: '静默收尾秒数', 'x-hot': true },
     'worlds.starpost.proactive.topicSimilarity': { type: 'number', minimum: 0, maximum: 1, title: '主动话题相似度上限', description: '0 关闭；仅应用于标记为主动发送的消息。', 'x-hot': true },
     'worlds.starpost.deliveryIntervalMs': { type: 'integer', minimum: 1000, maximum: 300000, title: '聊天消息合批投递间隔（毫秒）', description: '默认 20000 毫秒。星邮消息先积压，到期后一次唤醒；其他来源的唤醒可能提前带上积压消息。', 'x-hot': true },
-    'worlds.starpost.notifications.squareMode': { type: 'string', enum: ['realtime', 'digest', 'manual'], title: '广场通知模式', description: '混合/被动模式使用：realtime 实时；digest 汇总（默认）；manual 仅主动浏览。包含个人、群聊展示及公开游戏公告，游戏邀请与参赛消息不受影响。主动模式始终只定时提醒数量与 ID，正文按需查看。修改后重启 World。' },
-    'worlds.starpost.notifications.feedMode': { type: 'string', enum: ['realtime', 'digest'], title: '动态和评论通知模式', description: '混合/被动模式使用：digest 合并动态、删除和评论（默认）；realtime 即时通知。主动模式始终只定时提醒数量与 ID，正文按需查看。修改后重启 World。' },
+    'worlds.starpost.notifications.squareMode': { type: 'string', enum: ['realtime', 'digest', 'manual'], title: '广场通知模式', description: '混合/被动模式使用：realtime 实时；digest 汇总（默认）；manual 完全手动浏览，不发更新数量提醒，所有接收模式均有效。包含个人、群聊展示及公开游戏公告，游戏邀请与参赛消息不受影响。主动模式下 realtime/digest 只汇总提醒数量与 ID，正文按需查看。修改后重启 World。' },
+    'worlds.starpost.notifications.feedMode': { type: 'string', enum: ['realtime', 'digest', 'manual'], title: '动态和评论通知模式', description: '混合/被动模式使用：digest 合并动态、删除和评论（默认）；realtime 即时通知；manual 完全手动查看，不发更新数量提醒，所有接收模式均有效。主动模式下 realtime/digest 只汇总提醒数量与 ID，正文按需查看。修改后重启 World。' },
     'worlds.starpost.notifications.digestIntervalMs': { type: 'integer', minimum: 1000, maximum: 86400000, title: '广场和动态汇总间隔（毫秒）', description: '默认 300000 毫秒，从第一条待汇总通知计时；没有新通知时不唤醒。预览最多 20 项，全文可按需查看。修改后重启 World。' },
   } },
 };

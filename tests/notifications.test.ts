@@ -59,8 +59,8 @@ async function setup(clock: () => number) {
   return { dir, app, rpc, cfg, events, host, world, close: async () => { await app.close(); rmSync(dir, { recursive: true, force: true }); } };
 }
 
-test('公开游戏公告遵守混合及被动模式的广场设置，邀请和参赛事件保持及时投递', async () => {
-  for (const receiveMode of ['mixed', 'passive'] as const) for (const squareMode of ['manual', 'digest', 'realtime'] as const) {
+test('公开游戏公告遵守所有接收模式的广场设置，邀请和参赛事件保持及时投递', async () => {
+  for (const receiveMode of ['active', 'mixed', 'passive'] as const) for (const squareMode of ['manual', 'digest', 'realtime'] as const) {
     let now = Date.parse('2026-11-01T18:00:00+08:00'); const h = await setup(() => now);
     h.cfg.receiveMode = receiveMode; h.cfg.notifications.squareMode = squareMode;
     let receiver = h.world();
@@ -76,15 +76,55 @@ test('公开游戏公告遵守混合及被动模式的广场设置，邀请和�
       ] as const) h.app.store.emit(['10001'], type, data);
       await receiver.start(h.host);
       for (const type of ['game_invited', 'mystery_invited', 'game_reminder', 'game_private', 'game_public']) assert.ok(h.events.some(e => e.type === `starpost.${type}`), type);
-      assert.equal(h.events.filter(e => ['starpost.square_game', 'starpost.mystery_published'].includes(e.type)).length, squareMode === 'realtime' ? 2 : 0);
+      const realtime = squareMode === 'realtime' && receiveMode !== 'active';
+      assert.equal(h.events.filter(e => ['starpost.square_game', 'starpost.mystery_published'].includes(e.type)).length, realtime ? 2 : 0);
       assert.equal(h.events.some(e => e.type === 'starpost.notification_digest'), false);
       await receiver.stop(); receiver = h.world(); now += h.cfg.notifications.digestIntervalMs; await receiver.start(h.host);
       const notices = h.events.filter(e => e.type === 'starpost.notification_digest');
-      assert.equal(notices.length, squareMode === 'digest' ? 1 : 0);
-      if (squareMode === 'digest') {
+      assert.equal(notices.length, squareMode !== 'manual' && !realtime ? 1 : 0);
+      if (notices.length) {
         const body = digestBody(notices[0]); assert.equal(body.events, 2);
         assert.deepEqual(body.items.map((i: any) => i.id).sort(), ['public-mystery', 'public-wolf']);
-        assert.equal(body.items.find((i: any) => i.id === 'public-mystery').kind, 'mystery');
+        if (receiveMode !== 'active') assert.equal(body.items.find((i: any) => i.id === 'public-mystery').kind, 'mystery');
+      }
+    } finally { await receiver.stop(); await h.close(); }
+  }
+});
+
+test('手动关闭广场和动态后不再唤醒，观战提醒独立保留，重启清理旧汇总', async () => {
+  for (const receiveMode of ['active', 'mixed', 'passive'] as const) {
+    let now = Date.parse('2026-11-01T18:00:00+08:00'); const h = await setup(() => now);
+    h.cfg.receiveMode = receiveMode; let receiver = h.world();
+    try {
+      const postId = (await h.rpc('10002', 'post.publish', { text: '手动读取的动态正文' })).result.id;
+      await h.rpc('10002', 'square.showcase', { text: '手动读取的广场正文' });
+      await receiver.start(h.host); await receiver.stop();
+      h.cfg.notifications.squareMode = 'manual'; h.cfg.notifications.feedMode = 'manual';
+      now += h.cfg.notifications.digestIntervalMs;
+      receiver = h.world(); await receiver.start(h.host);
+      await h.rpc('10002', 'post.comment', { postId, text: '不推送的评论正文' });
+      for (const [type, data] of [
+        ['square.game', { id:'new-table', gameId:'new-table', text:'不推送的开桌公告' }],
+        ['post.comment', { postId, comment:{id:'c',text:'不推送的评论正文'} }],
+        ['owner.message', { text:'主人仍实时', prefix:'以下为主人消息' }],
+        ['game.invited', { gameId:'invited', creator:'10002' }],
+        ['square.ready', { kind:'bot', message:'展示冷却结束' }],
+        ['game.private', { gameId:'playing', recipients:['10001'], kind:'role', role:'seer' }],
+      ] as const) h.app.store.emit(['10001'], type, data);
+      await poll(receiver); now += h.cfg.notifications.digestIntervalMs; await poll(receiver);
+      assert.equal(h.events.some(e => e.type === 'starpost.notification_digest'), false);
+      assert.doesNotMatch(JSON.stringify(h.events), /不推送的|手动读取的/);
+      for (const type of ['owner_message','game_invited','square_ready','game_private']) assert.ok(h.events.some(e => e.type === 'starpost.'+type),type);
+      await familyTool(receiver,'post').handler({action:'read',postId},{} as never);
+      const directory = await familyTool(receiver,'square').handler({action:'browse'},{} as never);
+      assert.equal(JSON.parse(String(directory)).items.length,1);
+      assert.ok(h.events.some(e=>e.text.includes('手动读取的动态正文')));
+      if (receiveMode === 'active') {
+        h.app.store.emit(['10001'], 'game.public', {gameId:'watching',recipients:['10002'],kind:'chat',text:'观战正文不自动投递'});
+        await poll(receiver); now += h.cfg.notifications.digestIntervalMs; await poll(receiver);
+        const notice=h.events.find(e=>e.type==='starpost.notification_digest'); assert.ok(notice);
+        assert.deepEqual(digestBody(notice).items.map((i:any)=>i.category),['watch']);
+        assert.doesNotMatch(notice.text,/观战正文/);
       }
     } finally { await receiver.stop(); await h.close(); }
   }
@@ -151,7 +191,8 @@ test('切入主动模式后已持久化的旧汇总不泄露预览，主动阅�
     await receiver.start(h.host); await receiver.stop(); h.cfg.receiveMode = 'active'; h.cfg.notifications.squareMode = 'manual';
     now += h.cfg.notifications.digestIntervalMs; receiver = h.world(); await receiver.start(h.host);
     const notice = h.events.find(e => e.type === 'starpost.notification_digest')!;
-    assert.equal(digestBody(notice).events, 2); assert.doesNotMatch(notice.text, /切换之前|"preview"/);
+    assert.equal(digestBody(notice).events, 1); assert.doesNotMatch(notice.text, /切换之前|"preview"/);
+    assert.ok(digestBody(notice).items.every((item: any) => item.category === 'feed'));
     await h.rpc('10002', 'post.comment', { postId, text: '评论自己的动态，不通知自己' });
     h.app.store.emit(['10001'], 'post.comment', { postId, comment: { id: 'comment', text: '待查收' } });
     await poll(receiver);
