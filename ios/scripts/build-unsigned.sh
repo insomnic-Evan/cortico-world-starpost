@@ -12,7 +12,7 @@ xcodebuild -project Starpost.xcodeproj -scheme Starpost -configuration Release \
   CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY='' \
   build > build/xcode-device.log 2>&1 || { tail -n 120 build/xcode-device.log; exit 1; }
 APP="$PWD/build/DerivedData/Build/Products/Release-iphoneos/Starpost.app"
-xcrun lipo -verify_arch arm64 "$APP/Starpost"
+xcrun lipo "$APP/Starpost" -verify_arch arm64
 xcrun vtool -show-build "$APP/Starpost" | tee build/distribution/platform.txt
 grep -q 'platform IOS$' build/distribution/platform.txt
 if codesign --verify "$APP" >/dev/null 2>&1; then
