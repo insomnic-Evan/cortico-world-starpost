@@ -37,7 +37,7 @@ internal fun validServer(value: String) = runCatching { val u=URL(value); u.prot
 
 internal fun mobileRequest(base: String, path: String, body: JSONObject, token: String?): JSONObject {
     require(validServer(base)) { "服务器地址须为 HTTPS" }
-    val c=URL(base+path).openConnection() as HttpURLConnection
+    val c=URL(starpostTransport(base)+path).openConnection() as HttpURLConnection
     c.connectTimeout=15000;c.readTimeout=30000;c.instanceFollowRedirects=false;c.requestMethod="POST";c.doOutput=true;c.setRequestProperty("Content-Type","application/json")
     if(token != null)c.setRequestProperty("Authorization","Bearer $token")
     try {
@@ -60,7 +60,7 @@ internal class StarpostClient(app: Application): AndroidViewModel(app) {
     private var hubPending: JSONObject? = null
     private val preferences = app.getSharedPreferences("appearance", 0)
     private val network = Mutex()
-    private var server = "https://starpost.com.cn"
+    private var server = "https://8.148.13.225"
     private var token = ""
     private var sessionEpoch = 0
     private var pollJob: Job? = null

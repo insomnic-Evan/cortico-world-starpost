@@ -32,7 +32,7 @@ export class HumanAccess {
     if (action === 'account.info') {
       const botId = session.human ? session.selectedBotId : session.owner;
       const info=this.accounts.info(humanId);
-      return { ...info, safety:this.safety.status(humanId), bots:info.bots.map(p=>({...this.withRemark(humanId,p),...chatFlags(this.store,humanId,"owner",p.botId)})), botId, address: botId ? this.store.get('mobileProfile', botId)?.address ?? '' : '', legacy: !session.human };
+      return { ...info, sourceProject:session.sourceProject ?? 'starpost', safety:this.safety.status(humanId), bots:info.bots.map(p=>({...this.withRemark(humanId,p),...chatFlags(this.store,humanId,"owner",p.botId)})), botId, ...(botId ? this.mobile.ownerProfile(botId) : { address: '', addressPrompted: false }), legacy: !session.human };
     }
     if (['capsule.create','capsule.list','capsule.read','capsule.delete','capsule.status'].includes(action)) return this.rpc(humanId, action, args);
     if (action === 'logout') { this.store.remove(session.human ? 'humanSessions' : 'mobileSessions', session.key); return { loggedOut: true }; }
@@ -156,13 +156,13 @@ export class HumanAccess {
       if(rate.count>=6||rate.count>0&&now-rate.last<5000)fail('戳一戳过于频繁，请稍后再试',429);
       const human=this.accounts.publicProfile(humanId),bot=this.accounts.bots(humanId).find(p=>p.botId===botId);
       const text=`${human.nickname||humanId}戳了戳${bot.nickname||botId}${bot.pokeText||''}`;
-      const result=this.mobile.send(botId,'human',{text});
+      const result=this.mobile.send(botId,'human',{text},session.ownerIdentity);
       this.store.put('ownerPokeRate',humanId,{...rate,count:rate.count+1,last:now});
       return {...result,text};
     }
     // These actions are the existing read-only bot viewer and owner channel.
     // They never expose a bot's write RPC to a human session.
-    const value=this.mobile.call({ owner: botId || humanId, key: session.key, humanViewer: true }, action, args);
+    const value=this.mobile.call({ owner: botId || humanId, key: session.key, humanViewer: true, ownerIdentity: session.ownerIdentity }, action, args);
     if(action==='owner.history')return {...value,preferences:chatFlags(this.store,humanId,'owner',botId)};
     return action==='profile'&&(!args.section||args.section==='basic')?this.withRemark(humanId,value):value;
   }

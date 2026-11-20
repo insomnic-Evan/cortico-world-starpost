@@ -34,6 +34,13 @@ class AppUpdaterTest {
         override fun verify(release:AndroidRelease):File{verifications++;check(!corrupt){"校验失败"};return File("update.apk")}
     }
     @Before fun setup(){prefs=ApplicationProvider.getApplicationContext<Application>().getSharedPreferences("updater-test",0);prefs.edit().clear().commit()}
+    @Test fun ipDownloadsMustMatchTheTrustedOriginAndExactApkVersion(){
+        val ip=release.copy(url="https://8.148.13.225/downloads/starpost-android-1.2.2.apk")
+        assertEquals(ip,AndroidRelease.parse(ip.json().toString()))
+        for(url in listOf(ip.url.replace("1.2.2","1.2.3"),ip.url.replace("8.148.13.225","8.148.13.225.evil.example"),ip.url.replace("https:","http:"))) {
+            assertThrows(Exception::class.java){AndroidRelease.parse(ip.json().put("apkUrl",url).toString())}
+        }
+    }
     @Test fun metadataRejectsForeignHttpMutableAndOversizedDownloads(){
         assertEquals(release,AndroidRelease.parse(release.json().toString()))
         for((field,value) in listOf("packageName" to "attacker.app","apkUrl" to release.url.replace("https:","http:"),

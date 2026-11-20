@@ -101,8 +101,22 @@ internal fun conversationName(data:JSONObject,id:String,kind:String):String {
     Button(enabled=!s.working&&selected.isNotEmpty()&&(s.route.page=="invite"||name.isNotBlank()),onClick={if(s.route.page=="invite"){if(selected.size!=1)ui.vm.notice("请一次选择一位好友")else ui.vm.perform("social.group.invite",obj("groupId" to s.route.id,"botId" to selected.first()),Route("socialHistory",s.route.id,"group"))}else ui.vm.perform("social.group.create",obj("name" to name,"members" to JSONArray(selected)),Route())}){Text(if(s.route.page=="invite")"邀请所选好友" else "创建群聊 · ${selected.size} 位好友")}
 }}
 
+@Composable internal fun OwnerAddressPrompt(ui:UiActions,s:ClientState){
+    if(!s.signedIn||s.route.page!="owner"||s.account.str("botId").isEmpty())return
+    val key="${s.account.str("humanId")}:${s.account.str("botId")}"
+    var askAddress by remember(key){mutableStateOf(false)}
+    var optionalAddress by remember(key){mutableStateOf(s.account.str("address"))}
+    LaunchedEffect(key,s.account.optBoolean("addressPrompted"),s.account.str("address"),s.loading){if(!s.account.optBoolean("addressPrompted")&&s.account.str("address").isBlank()&&!s.loading)askAddress=true}
+    if(askAddress)AlertDialog(onDismissRequest={askAddress=false;ui.vm.perform("owner.address",obj("address" to ""))},
+        title={Text("希望 bot 怎样称呼你？")},
+        text={Column{Text("选填。留空时只标注 Hub 账号和项目来源，不注入称呼。");OutlinedTextField(optionalAddress,{optionalAddress=it},label={Text("称呼（可留空）")},singleLine=true)}},
+        confirmButton={TextButton(enabled=!s.working,onClick={ui.vm.perform("owner.address",obj("address" to optionalAddress)){askAddress=false}}){Text("保存")}},
+        dismissButton={TextButton(enabled=!s.working,onClick={ui.vm.perform("owner.address",obj("address" to "")){askAddress=false}}){Text("不填写")}})
+}
+
 @Composable private fun ChatScreen(ui:UiActions,s:ClientState){
     val route=s.route;val botReadOnly=route.page=="history";val readOnly=botReadOnly||route.page=="blockedHistory";val owner=route.page=="owner";val messages=s.data.rows("messages");val key="${s.account.str("humanId")}:${s.account.str("botId")}:${route.page}:${route.kind}:${route.id}"
+    OwnerAddressPrompt(ui,s)
     var draft by rememberSaveable(key){mutableStateOf(ui.vm.draft())};var quote by remember(key){mutableStateOf<JSONObject?>(null)}
     var menu by remember(key){mutableStateOf<JSONObject?>(null)};val selected=remember(key){mutableStateListOf<String>()}
     var forwardIds by remember(key){mutableStateOf<List<String>>(emptyList())};var targets by remember(key){mutableStateOf<JSONObject?>(null)};var record by remember(key){mutableStateOf<JSONObject?>(null)}
@@ -114,8 +128,7 @@ internal fun conversationName(data:JSONObject,id:String,kind:String):String {
     fun chooseForward(ids:List<String>){if(s.working)return;forwardIds=ids;ui.vm.perform("social.overview"){targets=it}}
     fun send(destination:Route,payload:JSONObject,done:()->Unit={}){
         val completed={ keyboard?.hide();focus.clearFocus();done(); if(destination.page==route.page&&destination.kind==route.kind&&destination.id==route.id)sent++ }
-        if(destination.page=="owner"&&s.account.str("address").isEmpty())ui.form("桌宠怎样称呼你？",listOf(TextFieldSpec("address","例如：主人")),"保存称呼后发送当前消息。"){v->ui.vm.sendChatPayload(destination,payload,v["address"],done=completed)}
-        else ui.vm.sendChatPayload(destination,payload,done=completed)
+        ui.vm.sendChatPayload(destination,payload,done=completed)
     }
     fun sendImage(image:JSONObject){val quoted=quote?.str("id");send(route,obj("text" to "","image" to image,"replyTo" to quoted)){if(quote?.str("id")==quoted)quote=null}}
     LaunchedEffect(messages.toString()){if(quote!=null&&messages.any{it.str("id")==quote?.str("id")&&it.optBoolean("recalled")})quote=null;selected.removeAll{old->messages.any{it.str("id")==old&&it.optBoolean("recalled")}}}
@@ -129,7 +142,7 @@ internal fun conversationName(data:JSONObject,id:String,kind:String):String {
                 if(selected.isNotEmpty()&&!m.optBoolean("recalled"))Checkbox(checked=m.str("id") in selected,onCheckedChange={toggle(m.str("id"))})
                 Box(Modifier.weight(1f)){Bubble(ui,m,self,label=if(owner){if(self)"我 · ${m.str("address")}" else contactName(s.account.rows("bots").find{it.str("botId")==s.account.str("botId")},"我的 bot")}else if(!readOnly&&route.kind=="private"&&!self)contactName(s.social.rows("friendProfiles").find{it.str("botId")==m.str("sender")},m.str("senderNickname",m.str("sender")))else m.str("senderNickname",m.str("sender")),
                     onMention=if(readOnly)null else {id,name->draft+="@$name ";ui.vm.mention(id,name);ui.vm.draft(draft);composerFocus.requestFocus()},
-                    onPoke=if(readOnly||self)null else {id->if(owner&&s.account.str("address").isEmpty())ui.vm.notice("请先在下方设置桌宠对你的称呼")else ui.vm.perform(if(owner)"owner.poke" else "social.poke",if(owner)obj() else obj("to" to id,"groupId" to if(route.kind=="group")route.id else "")){ui.vm.notice("已戳一戳")}},
+                    onPoke=if(readOnly||self)null else {id->ui.vm.perform(if(owner)"owner.poke" else "social.poke",if(owner)obj() else obj("to" to id,"groupId" to if(route.kind=="group")route.id else "")){ui.vm.notice("已戳一戳")}},
                     onLongClick={menu=m},onClick={if(selected.isNotEmpty()&&!m.optBoolean("recalled"))toggle(m.str("id"))},selected=m.str("id") in selected,
                     onForward={if(selected.isNotEmpty())toggle(m.str("id"))else ui.vm.perform(if(owner)"owner.read" else if(botReadOnly)"message.read" else "social.message.read",request(m)){record=it}}
                 )}}
@@ -144,7 +157,7 @@ internal fun conversationName(data:JSONObject,id:String,kind:String):String {
                     OutlinedTextField(draft,{draft=it;ui.vm.draft(it)},Modifier.weight(1f).focusRequester(composerFocus),placeholder={Text(if(owner)"和你的 bot 说说话…" else "写一条消息…")},shape=RoundedCornerShape(24.dp),maxLines=5)
                     FilledIconButton(enabled=!s.working&&draft.isNotBlank(),onClick={val sent=draft;val quoted=quote?.str("id");send(route,obj("text" to sent,"replyTo" to quoted,"mentions" to JSONArray(ui.vm.mentionIds(sent)))){if(draft==sent){draft="";ui.vm.draft("")};if(quote?.str("id")==quoted)quote=null}}){Glyph("send","发送消息")}
                 }
-                if(owner)TextButton(onClick={ui.form("修改称呼",listOf(TextFieldSpec("address","桌宠对你的称呼",s.account.str("address")))){ui.vm.perform("owner.address",obj("address" to it["address"]))}}){Text("${s.account.str("address","设置称呼").ifBlank{"设置称呼"}} · 专属频道",style=MaterialTheme.typography.labelSmall)}
+                if(owner)TextButton(onClick={ui.form("修改称呼",listOf(TextFieldSpec("address","选填，留空不注入称呼",s.account.str("address")))){ui.vm.perform("owner.address",obj("address" to it["address"]))}}){Text("${s.account.str("address","设置称呼").ifBlank{"设置称呼"}} · 专属频道",style=MaterialTheme.typography.labelSmall)}
             }
         }
     }
@@ -162,7 +175,7 @@ internal fun conversationName(data:JSONObject,id:String,kind:String):String {
     if(account.str("hubSubject").isNotEmpty()){
         SectionTitle("FFA hub 账号",account.str("hubSubject"))
         Text("此 Hub 身份拥有当前星邮业务号，好友与聊天记录按业务号分别保存。",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-        TextButton(onClick={runCatching{hubBrowser.openUri(account.str("hubIssuer","https://ffahub.net"))}.onFailure{ui.vm.notice("无法打开账号中心")}}){Text("管理 FFA hub 账号")}
+        TextButton(onClick={runCatching{hubBrowser.openUri(hubTransport(account.str("hubUrl",account.str("hubIssuer","https://ffahub.net"))))}.onFailure{ui.vm.notice("无法打开账号中心")}}){Text("管理 FFA hub 账号")}
     }
     Surface(shape=RoundedCornerShape(32.dp),color=MaterialTheme.colorScheme.primaryContainer,modifier=Modifier.fillMaxWidth()){Column(Modifier.padding(24.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){Avatar(account.str("nickname"),avatarId=account.str("humanId"),avatarVersion=account.str("avatarVersion"));Text(account.str("nickname"),style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold);AccountTitleBadge(account.str("accountTitle"),style=account.optJSONObject("accountTitleStyle"));Text(account.str("humanId"));Text(account.str("email"),style=MaterialTheme.typography.bodyMedium)}}
     AvatarEditor(ui,account.str("avatarVersion"))
@@ -176,7 +189,7 @@ internal fun conversationName(data:JSONObject,id:String,kind:String):String {
     SectionTitle("我的 bot","绑定多个 bot，在这里切换。")
     OwnerNotificationSetting(ui, s)
     account.rows("bots").forEach{bot->val id=bot.str("botId");key(id){Entry(contactName(bot,id),"${bot.str("nickname",id)} · $id",trailing=if(id==account.str("botId"))"使用中" else "切换",avatarId=id,avatarVersion=bot.str("avatarVersion"),accountTitle=bot.str("accountTitle"),accountTitleStyle=bot.optJSONObject("accountTitleStyle")){ui.vm.perform("account.select",obj("botId" to id))};RemarkButton(ui,id,bot.str("remark"),bot.str("nickname",id));AvatarEditor(ui,bot.str("avatarVersion"),id,bot.str("nickname",id));PokeTextEditor(ui,bot.str("pokeText"),id,bot.str("nickname",id))}}
-    FilledTonalButton(onClick={ui.form("绑定我的 bot",listOf(TextFieldSpec("botId","Bot ID"),TextFieldSpec("credential","本机凭据",secret=true)),"在 Cortico 星邮设置页顶部查看 ID 与凭据。首次绑定会自动选中。 "){values->ui.vm.perform("account.bind",obj("botId" to values["botId"],"credential" to values["credential"]),done={result->ui.pendingBoundBot=result.str("boundBotId",values["botId"]?.trim()?:"")})}}){Glyph("link");Spacer(Modifier.width(8.dp));Text("绑定新的 bot")}
+    FilledTonalButton(onClick={ui.form("绑定我的 bot",listOf(TextFieldSpec("botId","星邮 Bot ID"),TextFieldSpec("credential","本机凭据（token）",secret=true)),"填写星邮配置或凭据文件里的 token 字段（通常为 64 位），也可粘贴含 token 的完整 JSON。这里不是 Hub 主体 ID 或恢复凭据。尚无 Hub 管理者的旧 bot，绑定后同步到 Hub 的“共同管理的 bot”。首次绑定会自动选中。"){values->ui.vm.perform("account.bind",obj("botId" to values["botId"],"credential" to values["credential"]),done={result->ui.pendingBoundBot=result.str("boundBotId",values["botId"]?.trim()?:"")})}}){Glyph("link");Spacer(Modifier.width(8.dp));Text("绑定新的 bot")}
     Entry("社交审批","好友与混合群的待办请求"){ui.go("approvals")}
     if(account.str("botId").isNotEmpty()){Entry("联系当前 bot","进入你的专属频道"){ui.go("owner")};Entry("青少年模式","管理当前 bot 的好友和入群请求"){ui.go("teen")}}
     Text("登录有效期至 ${time(Instant.ofEpochMilli(s.expiresAt).toString())}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)

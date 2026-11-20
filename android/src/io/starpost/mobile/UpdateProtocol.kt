@@ -16,7 +16,7 @@ import java.time.Instant
 import java.time.ZoneId
 
 internal const val UPDATE_REPO = "https://github.com/hth768/cortico-world-starpost/releases/"
-internal const val UPDATE_MANIFEST = "${UPDATE_REPO}latest/download/android-update.json"
+internal const val UPDATE_MANIFEST = "https://8.148.13.225/downloads/android-update.json"
 internal const val MAX_APK_BYTES = 150L * 1024 * 1024
 internal const val APK_MIME = "application/vnd.android.package-archive"
 
@@ -34,7 +34,8 @@ internal data class AndroidRelease(val code:Long, val name:String, val minSdk:In
             require(code in 1..2_100_000_000 && name.matches(Regex("[0-9]+\\.[0-9]+\\.[0-9]+"))) { "更新版本信息无效" }
             require(sdk in 26..100 && size in 1..MAX_APK_BYTES && hash.matches(Regex("[a-f0-9]{64}"))) { "更新文件信息无效" }
             // Pin downloads to an immutable release in our repository, never an account-provided URL.
-            require(url.matches(Regex(Regex.escape(UPDATE_REPO)+"download/v[0-9]+\\.[0-9]+\\.[0-9]+/starpost-android\\.apk"))) { "更新下载地址无效" }
+            require(url.matches(Regex(Regex.escape(UPDATE_REPO)+"download/v[0-9]+\\.[0-9]+\\.[0-9]+/starpost-android\\.apk")) ||
+                url == "https://8.148.13.225/downloads/starpost-android-$name.apk") { "更新下载地址无效" }
             return AndroidRelease(code,name,sdk,size,hash,url,p.optString("notes").take(6000))
         }
     }
@@ -67,7 +68,7 @@ internal class AndroidUpdateBackend(private val context:Context):UpdateBackend {
     override fun latest():AndroidRelease {
         var address=URI(UPDATE_MANIFEST)
         repeat(6) {
-            require(address.scheme=="https" && address.userInfo==null && address.port in listOf(-1,443) && address.host in setOf("github.com","release-assets.githubusercontent.com","objects.githubusercontent.com")) { "更新服务跳转地址不受信任" }
+            require(address.scheme=="https" && address.userInfo==null && address.port in listOf(-1,443) && address.host in setOf("8.148.13.225","github.com","release-assets.githubusercontent.com","objects.githubusercontent.com")) { "更新服务跳转地址不受信任" }
             val connection=address.toURL().openConnection() as HttpURLConnection
             try {
                 connection.instanceFollowRedirects=false; connection.connectTimeout=15_000; connection.readTimeout=15_000

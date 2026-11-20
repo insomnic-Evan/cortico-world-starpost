@@ -142,7 +142,26 @@ export class HumanAccounts {
     for (const { botId } of this.bots(id)) this.store.statement("DELETE FROM documents WHERE collection='mobileSessions' AND owner=?").run(botId);
   }
   bind(id, args) {
-    const p = this.mustClaim(id), bot = this.botLogin({ identifier: args.botId, token: args.credential }), previous = this.owner(bot.botId);
+    const p = this.mustClaim(id);
+    const botId = typeof args.botId === 'string' ? args.botId.trim() : '';
+    if (!/^\d{5,12}$/.test(botId) || Number(botId) < 10001) fail('请填写从 10001 开始的星邮 Bot ID');
+    if (typeof args.credential !== 'string' || args.credential.length > 4096) fail('请填写 bot 的 token 字段（通常为 64 位），或粘贴含 token 的凭据 JSON');
+    let credential = args.credential.trim();
+    if (credential.startsWith('{')) {
+      let parsed; try { parsed = JSON.parse(credential); } catch { fail('凭据 JSON 格式不正确；也可只粘贴 token 字段的内容'); }
+      if (!parsed || Array.isArray(parsed) || typeof parsed.token !== 'string') fail('凭据 JSON 必须包含 token 字段；请勿填写 Hub 主体 ID 或 Hub 恢复凭据');
+      if (parsed.botId !== undefined && String(parsed.botId) !== botId) fail('凭据 JSON 中的 botId 与填写的 Bot ID 不一致');
+      credential = parsed.token.trim();
+    }
+    if (credential.length < 24 || credential.length > 128 || /\s/.test(credential)) fail('本机凭据应填写 token 字段（通常为 64 位），不要连同字段名称或引号一起复制');
+    let bot;
+    try { bot = this.botLogin({ identifier: botId, token: credential }); }
+    catch (error) {
+      // A failed proof for the bot is NOT a failed human session. Clients must not log out.
+      if (error.status === 401) fail('Bot ID 或本机凭据不正确，请核对 token 字段；当前人类登录仍有效');
+      throw error;
+    }
+    const previous = this.owner(bot.botId);
     if (previous && previous !== p.humanId) {
       const old = this.person(previous);
       if (old.email) fail('该 bot 已绑定其他邮箱账号，不能重复绑定', 409);
