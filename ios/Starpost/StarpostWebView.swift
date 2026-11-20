@@ -43,6 +43,7 @@ final class BrowserController: UIViewController, WKNavigationDelegate, WKUIDeleg
         view.backgroundColor = .systemBackground
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = WKWebsiteDataStore(forIdentifier: session.storeIdentifier)
+        configuration.applicationNameForUserAgent = "Starpost-iOS/\(StarpostIdentity.version)"
         configuration.allowsInlineMediaPlayback = true
         configuration.mediaTypesRequiringUserActionForPlayback = .all
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
@@ -160,6 +161,11 @@ final class BrowserController: UIViewController, WKNavigationDelegate, WKUIDeleg
         if navigationAction.shouldPerformDownload && (StarpostIdentity.isTrusted(url) || isOwnBlob(url)) {
             decisionHandler(.download); return
         }
+        if let frame = navigationAction.targetFrame,
+           webView.url.map(StarpostIdentity.isTrusted) == true,
+           StarpostIdentity.isDockPanel(url, isMainFrame: frame.isMainFrame) {
+            decisionHandler(.allow); return
+        }
         if StarpostIdentity.isTrusted(url) {
             if url.path == "/login" || url.path.hasPrefix("/web/hub/") {
                 decisionHandler(.cancel); onSessionEnded(); return
@@ -177,7 +183,13 @@ final class BrowserController: UIViewController, WKNavigationDelegate, WKUIDeleg
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
-        guard let url = navigationResponse.response.url, StarpostIdentity.isTrusted(url) || isOwnBlob(url) else {
+        guard let url = navigationResponse.response.url else { decisionHandler(.cancel); return }
+        if webView.url.map(StarpostIdentity.isTrusted) == true,
+           StarpostIdentity.isDockPanel(url, isMainFrame: navigationResponse.isForMainFrame) {
+            decisionHandler(navigationResponse.response.mimeType == "text/html" ? .allow : .cancel)
+            return
+        }
+        guard StarpostIdentity.isTrusted(url) || isOwnBlob(url) else {
             decisionHandler(.cancel); return
         }
         if navigationResponse.canShowMIMEType { decisionHandler(.allow) }

@@ -7,6 +7,18 @@ final class IdentityTests: XCTestCase {
         LoginSession(accessToken: token, expiresAt: expires ?? (now.timeIntervalSince1970 + 86400) * 1000,
                      humanId: account, hubSubject: subject, hubIssuer: issuer)
     }
+    func testUnsignedUpdatesAndBeijingMidnight() throws {
+        func release(_ url: String) -> MobileRelease {
+            MobileRelease(platform: "ios", version: "0.2.0", build: "2", signed: false, minimumIOS: "17.0", url: URL(string: url)!)
+        }
+        let link = MobileRelease.directory + "/0.2.0/starpost-ios-0.2.0-unsigned.ipa"
+        XCTAssertTrue(release(link).isAvailable(after: 1, systemVersion: "27.2"))
+        XCTAssertFalse(release(link).isAvailable(after: 2, systemVersion: "27.2"))
+        XCTAssertFalse(release(link).isAvailable(after: 1, systemVersion: "16.6"))
+        XCTAssertFalse(release(link + "?redirect=other").isAvailable(after: 1, systemVersion: "27.2"))
+        let midnight = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-11-20T16:00:00Z"))
+        XCTAssertNotEqual(MobileRelease.beijingDay(midnight.addingTimeInterval(-1)), MobileRelease.beijingDay(midnight))
+    }
     func testPKCERFC7636Vector() {
         XCTAssertEqual(StarpostIdentity.challenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"), "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM")
     }
@@ -38,10 +50,24 @@ final class IdentityTests: XCTestCase {
             HubFlow(flowId: flow, verifier: flow, authorizationUrl: URL(string: url)!, expiresAt: now.timeIntervalSince1970 * 1000 + expiry)
         }
         XCTAssertNoThrow(try make("https://starpost.com.cn/web/hub/start?mobile=\(flow)").validate(now: now))
-        for url in ["https://attacker.test/web/hub/start?mobile=\(flow)", "https://starpost.com.cn/web/hub/start?mobile=\(flow)&next=evil", "https://starpost.com.cn/app?mobile=\(flow)"] {
+        XCTAssertNoThrow(try make("https://8.148.13.225/web/hub/start?mobile=\(flow)").validate(now: now))
+        XCTAssertFalse(StarpostIdentity.isTrusted(URL(string: "https://8.148.13.225/app")!))
+        for url in ["https://8.148.13.225:8443/web/hub/start?mobile=\(flow)", "https://8.148.13.225.example.com/web/hub/start?mobile=\(flow)", "https://attacker.test/web/hub/start?mobile=\(flow)", "https://starpost.com.cn/web/hub/start?mobile=\(flow)&next=evil", "https://starpost.com.cn/app?mobile=\(flow)"] {
             XCTAssertThrowsError(try make(url).validate(now: now))
         }
         XCTAssertThrowsError(try make("https://starpost.com.cn/web/hub/start?mobile=\(flow)", expiry: -1).validate(now: now))
+    }
+    func testServiceFramesStaySeparateFromAuthenticatedNavigation() {
+        let panel = "https://8.137.59.209/downloads/ffa/addons/coodock/web/1.0.0/index.html"
+        for route in ["world", "workbench", "deployments"] {
+            let url = URL(string: panel + "#" + route)!
+            XCTAssertTrue(StarpostIdentity.isDockPanel(url, isMainFrame: false))
+            XCTAssertFalse(StarpostIdentity.isDockPanel(url, isMainFrame: true))
+            XCTAssertFalse(StarpostIdentity.isTrusted(url))
+        }
+        for candidate in [panel + "?redirect=x", panel + "/other", panel.replacingOccurrences(of: "1.0.0", with: "%2E%2E"), panel.replacingOccurrences(of: "8.137.59.209", with: "8.137.59.209.example.org"), panel.replacingOccurrences(of: "/downloads/", with: ":8443/downloads/")] {
+            XCTAssertFalse(StarpostIdentity.isDockPanel(URL(string: candidate)!, isMainFrame: false))
+        }
     }
     func testInvalidIdentityAndExpirationCannotOpenWebView() {
         XCTAssertNoThrow(try session().validate(now: now))

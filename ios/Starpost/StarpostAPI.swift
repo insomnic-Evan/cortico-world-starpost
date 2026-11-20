@@ -38,7 +38,7 @@ final class StarpostAPI {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("Starpost-iOS/0.1.0", forHTTPHeaderField: "User-Agent")
+        request.setValue("Starpost-iOS/\(StarpostIdentity.version)", forHTTPHeaderField: "User-Agent")
         if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (bytes, response) = try await client.bytes(for: request)

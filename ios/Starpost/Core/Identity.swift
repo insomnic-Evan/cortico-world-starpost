@@ -25,6 +25,24 @@ enum StarpostIdentity {
         return c.scheme == "https" && c.host == origin.host && (c.port == nil || c.port == 443)
             && c.user == nil && c.password == nil
     }
+    static var version: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
+    }
+
+    static func isLoginOrigin(_ url: URL) -> Bool {
+        if isTrusted(url) { return true }
+        guard let c = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return false }
+        return c.scheme == "https" && c.host == "8.148.13.225" && (c.port == nil || c.port == 443)
+            && c.user == nil && c.password == nil
+    }
+
+    static func isDockPanel(_ url: URL, isMainFrame: Bool) -> Bool {
+        guard !isMainFrame, let c = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              c.scheme == "https", c.host == "8.137.59.209", c.port == nil || c.port == 443,
+              c.user == nil, c.password == nil, c.query == nil else { return false }
+        return matches(c.percentEncodedPath, #"^/downloads/ffa/addons/coodock/web/[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}/index\.html$"#)
+    }
+
     static func matches(_ text: String, _ pattern: String) -> Bool {
         text.range(of: pattern, options: .regularExpression) != nil
     }
@@ -52,7 +70,7 @@ struct HubFlow: Codable, Equatable {
         guard expiresAt <= (now.timeIntervalSince1970 + 660) * 1000,
               StarpostIdentity.matches(flowId, "^[A-Za-z0-9_-]{43}$"),
               StarpostIdentity.matches(verifier, "^[A-Za-z0-9_-]{43,128}$"),
-              StarpostIdentity.isTrusted(authorizationUrl), authorizationUrl.path == "/web/hub/start",
+              StarpostIdentity.isLoginOrigin(authorizationUrl), authorizationUrl.path == "/web/hub/start",
               let c = URLComponents(url: authorizationUrl, resolvingAgainstBaseURL: false), c.fragment == nil,
               c.queryItems == [URLQueryItem(name: "mobile", value: flowId)] else { throw ClientError.invalidResponse }
     }

@@ -1,12 +1,10 @@
 # 星邮 iOS（无签名测试版）
 
-SwiftUI 原生外壳 + WKWebView 复用星邮移动网页，优先保持现有功能。支持 iPhone / iPad，最低 iOS / iPadOS 17。版本 `0.1.0 (1)`，Bundle ID `io.starpost.ios`。
+SwiftUI 原生外壳 + WKWebView 复用星邮移动网页，优先保持现有功能。支持 iPhone / iPad，最低 iOS / iPadOS 17。版本 `0.2.0 (2)`，Bundle ID `io.starpost.ios`。
 
-## 当前验证状态（2026-11-16）
+## 0.2.0 更新
 
-工程已建立，源码语法解析、Xcode 工程引用、plist / scheme / 图标资源检查通过；7 项相关 Hub 服务端与客户端协议回归通过。线上只读检查确认 `/health` 正常，登录入口为 `https://ffahub.net`。
-
-GitHub 仓库 Actions 设置已启用、工作流已注册，但执行接口返回 HTTP 422 `Actions has been disabled for this user.`，尚未创建运行任务。因此 **Swift 核心测试、Xcode 编译、模拟器截图和真机验收均尚未执行，没有生成 IPA**。恢复账号 Actions 后，运行 `Build unsigned iOS client`，源码选择 `ios-client`，继续修复构建中发现的问题并验收。
+iOS 客户端使用线上星邮网页，与 Android 共用 FFA hub 和星邮账户数据。系统授权窗口支持官网和正式 IP 登录入口；CooDock 的 World、工作台、部署管理在独立子页面中运行。私聊、群聊与专属频道的前台提醒沿用服务器的免打扰和 @ 规则。新版 IPA 由共享下载服务器提供，客户端自动检查版本，支持按北京时间当天暂停提示。
 
 ## 使用方式
 
@@ -44,7 +42,7 @@ GitHub 仓库 Actions 设置已启用、工作流已注册，但执行接口返�
 
 ## 在 Mac / GitHub Actions 构建
 
-需要 macOS、Xcode 16 或更高版本及 iOS SDK。没有 Apple 环境的 Windows 电脑能编辑和打包源码，**不能原生执行 Xcode 编译**。
+正式构建使用 macOS、Xcode 27 和 iOS SDK。没有 Apple 环境的 Windows 电脑能编辑和打包源码，**不能原生执行 Xcode 编译**。
 
 ```bash
 bash ios/scripts/build-unsigned.sh
@@ -52,7 +50,7 @@ bash ios/scripts/build-unsigned.sh
 
 脚本依次执行 Swift 核心回归测试、真机 `iphoneos arm64` 编译、Mach-O 平台检查、未签名检查，再将实际 `.app` 打包成 `Payload/Starpost.app` 结构的 IPA，并生成 SHA-256 与构建元信息。不会把模拟器包当成真机 IPA。
 
-输出：`ios/build/distribution/starpost-ios-0.1.0-unsigned.ipa`。GitHub 工作流 `Build unsigned iOS client` 使用标准 `macos-15` runner，不需要 Apple 证书。手动运行时 `source_ref` 默认选择 `ios-client` 分支。工作流还会编译模拟器版本，启动 App，保存明暗登录页截图。Actions 产物保留 14 天。
+输出：`ios/build/distribution/starpost-ios-0.2.0-unsigned.ipa`。GitHub 工作流 `Build unsigned iOS client` 使用`xcode-27` arm64 runner，不需要 Apple 证书。手动运行时 `source_ref` 默认选择 `ios-client` 分支。工作流还会编译模拟器版本，启动 App，保存明暗登录页截图。Actions 产物保留 14 天。
 
 在 Xcode 中打开 `ios/Starpost.xcodeproj` 也可构建。若要签名运行，请由操作者自行配置团队和合法签名方式。
 

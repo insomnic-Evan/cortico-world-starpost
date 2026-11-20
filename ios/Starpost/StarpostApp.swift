@@ -18,6 +18,9 @@ struct RootView: View {
     @State private var reload = 0
     @State private var showAbout = false
     @State private var confirmLogout = false
+    @State private var availableRelease: MobileRelease?
+    @State private var lastUpdateCheck: Date?
+    @AppStorage("starpost.ios.dismissedUpdateDay") private var dismissedUpdateDay = ""
     private let timer = Timer.publish(every: 15, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -55,12 +58,56 @@ struct RootView: View {
                 }.allowsHitTesting(false)
             }
         }
+        .task(id: phase) {
+            guard phase == .active else { return }
+            while !Task.isCancelled {
+                await checkForUpdate()
+                do { try await Task.sleep(for: .seconds(900)) } catch { return }
+            }
+        }
+        .alert(item: $availableRelease) { release in
+            Alert(title: Text("星邮 iOS \(release.version) 已发布"),
+                  message: Text("下载新版 IPA 后请自行签名安装。"),
+                  primaryButton: .default(Text("下载更新")) { UIApplication.shared.open(release.url) },
+                  secondaryButton: .cancel(Text("今天不再提示")) {
+                      dismissedUpdateDay = MobileRelease.beijingDay(Date())
+                  })
+        }
         .onChange(of: phase) { _, next in if next == .active { Task { await identity.foreground() } } }
         .onReceive(timer) { _ in if phase == .active { Task { await identity.checkExpiration() } } }
         .confirmationDialog("退出当前星邮账号？", isPresented: $confirmLogout, titleVisibility: .visible) {
             Button("退出并重新选择账号", role: .destructive) { Task { await identity.signOut() } }
         } message: { Text("聊天记录仍保留在服务器，本机登录凭据会被移除。") }
         .sheet(isPresented: $showAbout) { about }
+    }
+
+    @MainActor
+    private func checkForUpdate() async {
+        let now = Date()
+        let today = MobileRelease.beijingDay(now)
+        guard dismissedUpdateDay != today, availableRelease == nil,
+              let current = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String,
+              let build = Int(current) else { return }
+        if let last = lastUpdateCheck, MobileRelease.beijingDay(last) == today,
+           now.timeIntervalSince(last) < 3600 { return }
+        var request = URLRequest(url: MobileRelease.manifest, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)
+        request.httpShouldHandleCookies = false
+        do {
+            let (bytes, reply) = try await URLSession.shared.bytes(for: request)
+            guard let http = reply as? HTTPURLResponse, http.statusCode == 200,
+                  http.url == MobileRelease.manifest else { return }
+            var data = Data()
+            for try await byte in bytes {
+                guard data.count < 16_384 else { return }
+                data.append(byte)
+            }
+            let release = try JSONDecoder().decode(MobileRelease.self, from: data)
+            guard !Task.isCancelled, phase == .active else { return }
+            lastUpdateCheck = now
+            if release.isAvailable(after: build, systemVersion: UIDevice.current.systemVersion) {
+                availableRelease = release
+            }
+        } catch { return }
     }
 
     private var login: some View {
@@ -113,9 +160,9 @@ struct RootView: View {
     private var about: some View {
         NavigationStack {
             List {
-                Section("星邮 iOS · 0.1.0") {
+                Section("星邮 iOS · \(StarpostIdentity.version)") {
                     Text("原生 iOS 外壳，复用星邮移动网页。支持现有的聊天、资料、动态、漂流瓶与游戏页面。")
-                    Text("本版只在前台收发；后台与锁屏通知尚未接入。")
+                    Text("打开星邮时可接收新消息提醒，开关在聊天设置中。锁屏推送需要带推送授权的签名版。")
                 }
                 Section("隐私与账号") {
                     Text("Hub 密码由系统登录窗口处理。原生登录凭据保存在钥匙串，网页使用受保护的会话 Cookie；网页数据按 Hub 身份与星邮账号隔离。")
