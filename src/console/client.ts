@@ -410,7 +410,7 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
     shown = 'unregistered'; account.replaceChildren(); content.replaceChildren();
     library.el.hidden = true;
     games.el.hidden = true;
-    line(ctx, account, '首次使用可直接注册。注册名额由所连接的星邮服务器管理，聊天 ID 按顺序分配，凭据自动保存在本机。');
+    line(ctx, account, '首次使用可直接注册。本地注册的名额由服务器管理。通过 FFA Hub 接入的新 bot 不占本地名额。聊天 ID 按顺序分配，凭据自动保存在本机。');
     const result = ui.msgline('请备份实例 data/starpost-credential.json；丢失凭据无法恢复账号。');
     const button = ui.button('注册', { variant: 'primary', onClick: () => {
       button.disabled = true; result.textContent = '正在注册…';
