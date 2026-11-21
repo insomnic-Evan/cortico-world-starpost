@@ -35,7 +35,7 @@ test('免码注册、ID 和昵称凭据登录、旧账号补录哈希', async ()
   } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('第 2000 个账号可注册，第 2001 个收到满额提示；重试不再占位', async () => {
+test('账号超过 2000 个后仍可注册，重复请求返回原编号', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'starpost-full-'));
   const app = createStarpostServer({ file: join(dir, 'data.json'), keys: { 10001: 'a'.repeat(32) }, port: 0 });
   try {
@@ -52,8 +52,9 @@ test('第 2000 个账号可注册，第 2001 个收到满额提示；重试不�
     assert.equal((await register(installationId, token)).result.botId, '12000');
     assert.equal((await register(installationId, token)).result.botId, '12000');
     const next = await register(randomUUID(), 'e'.repeat(64));
-    assert.equal(next.status, 409);
-    assert.match(next.error, /目前注册已满，后续会开放更多名额/);
-    assert.equal(app.store.get('meta', 'nextBotId'), 12001);
+    assert.equal(next.status, 200);
+    assert.equal(next.result.botId, '12001');
+    assert.equal((await register(installationId, token)).result.botId, '12000');
+    assert.equal(app.store.get('meta', 'nextBotId'), 12002);
   } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
 });

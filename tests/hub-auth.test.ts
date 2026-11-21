@@ -10,6 +10,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { StarpostWorld } from '../src/world.ts';
 import { STARPOST_DEFAULTS } from '../src/config.ts';
+import { HubBridge } from '../server/hub-bridge.mjs';
 import { createStarpostServer } from '../server/server.mjs';
 
 const hubRoot = resolve(process.env.FFA_HUB_SOURCE || '../ffa-hub');
@@ -92,13 +93,34 @@ test('signed Hub pairing preserves Starpost ID, requires primary, survives resta
   assert.equal((await f.call('/rpc', { action: 'snapshot' }, { authorization: 'Bearer ' + f.key, 'x-starpost-id': '10001' })).status, 200);
 });
 
-test('Hub bot 不占本地注册名额，本地满额后新 Hub bot 仍可接入', { skip: !available }, async t => {
+test('整库超过一万条时分批同步，每批都带上归属人和别名主账号', async () => {
+  const humans = Array.from({ length: 10001 }, (_, i) => ({ id: (10001 + i) + 'H', aliasOf: undefined as string | undefined }));
+  humans[0].aliasOf = humans.at(-1)!.id;
+  const bots = Array.from({ length: 10001 }, (_, i) => ({ id: String(10001 + i), owner: humans.at(-1)!.id }));
+  const importedBots = new Set<string>(), importedPeople = new Set<string>();
+  const bridge = Object.create(HubBridge.prototype);
+  bridge.snapshot = () => ({ people: humans, bots });
+  bridge.store = { transaction: (work: () => void) => work() };
+  bridge.request = async (_path: string, batch: { linkScope: string, people: typeof humans, bots: typeof bots }) => {
+    assert.equal(batch.linkScope, 'submitted');
+    assert(batch.people.length <= 10000 && batch.bots.length <= 10000);
+    const ids = new Set(batch.people.map(p => p.id));
+    for (const p of batch.people) { importedPeople.add(p.id); if (p.aliasOf) assert(ids.has(p.aliasOf)); }
+    for (const bot of batch.bots) { assert(ids.has(bot.owner)); assert(!importedBots.has(bot.id)); importedBots.add(bot.id); }
+    return { links: [] };
+  };
+  await bridge.sync();
+  assert.equal(importedBots.size, bots.length);
+  assert.equal(importedPeople.size, humans.length);
+});
+
+test('本地与 Hub bot 超过原注册上限后仍可交替接入，共用顺延编号', { skip: !available }, async t => {
   const f = await fixture(t);
   f.relay.store.transaction(() => {
-    for (let id = 10002; id < 12000; id++) {
+    for (let id = 10002; id < 20001; id++) {
       f.relay.store.put('accounts', String(id), { installationId: String(id), tokenHash: 'unused' });
     }
-    f.relay.store.put('meta', 'nextBotId', 12000);
+    f.relay.store.put('meta', 'nextBotId', 20001);
   });
   async function pairNew(name: string) {
     const bot = f.app.hub.createBot(name, f.owner.id).bot.id;
@@ -108,14 +130,14 @@ test('Hub bot 不占本地注册名额，本地满额后新 Hub bot 仍可接入
     f.primary(bot, pairing.installationId);
     return panel(world, 'hubFinish');
   }
-  assert.equal((await pairNew('hub-before-full')).botId, '12000');
+  assert.equal((await pairNew('hub-first')).botId, '20001');
   const local = { installationId: '00000000-0000-4000-8000-000000000001', token: 'a'.repeat(64) };
-  assert.equal((await f.call('/register', local)).result.botId, '12001');
+  assert.equal((await f.call('/register', local)).result.botId, '20002');
   const extra = { installationId: '00000000-0000-4000-8000-000000000002', token: 'b'.repeat(64) };
-  assert.equal((await f.call('/register', extra)).status, 409);
-  assert.equal((await pairNew('hub-after-full')).botId, '12002');
-  assert.equal((await f.call('/register', local)).result.botId, '12001');
-  assert.equal(f.relay.store.get('meta', 'nextBotId'), 12003);
+  assert.equal((await f.call('/register', extra)).result.botId, '20003');
+  assert.equal((await pairNew('hub-next')).botId, '20004');
+  assert.equal((await f.call('/register', local)).result.botId, '20002');
+  assert.equal(f.relay.store.get('meta', 'nextBotId'), 20005);
 });
 
 test('new Hub bot provisions one business account; re-pair and migration do not duplicate it', { skip: !available }, async t => {

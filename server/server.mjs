@@ -35,8 +35,6 @@ import { HumanAccess } from './human-access.mjs';
 import { HubBridge } from './hub-bridge.mjs';
 import { HubSso } from './hub-sso.mjs';
 
-const MAX_LOCAL_BOT_ACCOUNTS = 2000;
-
 const fail = (message, code = 400) => { const e = new Error(message); e.status = code; throw e; };
 const id = (v) => typeof v === 'string' && /^\d{5,12}$/.test(v) && Number(v) >= 10001 && Number.isSafeInteger(Number(v)) ? v : fail('聊天 ID 须是从 10001 起的数字');
 const chatId = value => isHumanId(value) ? value : id(value);
@@ -81,7 +79,8 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
   try {
     for (const botId of accountIds()) { id(botId); if (known.has(botId)) fail('注册账号与 BOT_KEYS 的 ID 冲突'); }
     const next = store.get('meta', 'nextBotId');
-    store.transaction(() => store.put('meta', 'nextBotId', Math.max(10001, Number.isSafeInteger(next) ? next : 10001, ...knownIds().map(x => Number(x) + 1))));
+    const nextId = knownIds().reduce((high, botId) => Math.max(high, Number(botId) + 1), Math.max(10001, Number.isSafeInteger(next) ? next : 10001));
+    store.transaction(() => store.put('meta', 'nextBotId', nextId));
   } catch (error) { store.close(); throw error; }
   let reminders;
   try { reminders = new SquareReminders(store, timezone); } catch (error) { store.close(); throw error; }
@@ -114,8 +113,6 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       if (!same(hash(token), JSON.parse(existing.data).tokenHash)) fail('该安装已注册', 409);
       return { botId: existing.key, profile: profile(existing.key) };
     }
-    const localCount = store.statement("SELECT COUNT(*) AS n FROM documents WHERE collection='accounts' AND json_extract(data, '$.hubSubject') IS NULL").get().n;
-    if (known.size + localCount >= MAX_LOCAL_BOT_ACCOUNTS) fail('目前注册已满，后续会开放更多名额', 409);
     const next = store.get('meta', 'nextBotId'), botId = id(String(next));
     store.put('meta', 'nextBotId', next + 1);
     store.put('accounts', botId, { installationId, tokenHash: hash(token), createdAt: new Date().toISOString() });
@@ -1031,7 +1028,7 @@ export function createStarpostServer({ file = './starpost-data.json', dbFile, me
       if (req.url === '/register') {
         if (raw.length > 4096) fail('注册请求过大', 413);
         const result = store.transaction(() => register(JSON.parse(raw)));
-        if (hubBridge) await hubBridge.sync();
+        if (hubBridge) await hubBridge.sync(result.botId);
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify({ ok: true, result: titles.decorate(result) })); return;
       }
       if (req.url === '/login') {

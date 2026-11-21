@@ -13,14 +13,42 @@ export class HubBridge {
     let response; try { response = await new Promise((resolve, reject) => { const raw = JSON.stringify(body); const request = http.request(this.config.internalBase + path, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: this.auth, Host: this.config.host, 'Content-Length': Buffer.byteLength(raw) } }, res => { let data = ''; res.on('data', part => { data += part.toString(); if (Buffer.byteLength(data) > 4 * 1024 * 1024) request.destroy(Error('Large response')); }); res.on('error', reject); res.on('end', () => { try { resolve({ status: res.statusCode, data: JSON.parse(data) }); } catch { reject(Error('Bad response')); } }); }); request.setTimeout(4000, () => request.destroy(Error('Timeout'))); request.on('error', reject); request.end(raw); }); } catch { fail('FFA hub 暂时不可用，请稍后重试；已有内容和草稿保留', 503); }
     const out = response.data; if (response.status !== 200 || !out.ok) fail(out.message || 'FFA hub 验证失败', response.status); return out.result;
   }
-  snapshot() { return { people: this.store.entries('people').filter(([, p]) => !p.hubPending).map(([id, p]) => ({ id, nickname: p.nickname, email: p.email, password: p.password, aliasOf: p.aliasOf })), bots: this.knownIds().filter(id => !this.store.get('accounts', id)?.hubPending).map(id => ({ id, nickname: this.profile(id).nickname, owner: this.accounts.owner(id), teenMode: this.store.get('teenSettings', id)?.enabled, dailyGames: this.store.get('limits', id)?.maxWerewolfGamesPerDay })) }; }
-  async sync() {
-    const result = await this.request('/v1/starpost/import', this.snapshot());
-    this.store.transaction(() => { for (const link of result.links ?? []) {
-      if (!this.store.get('hubOriginalMappings', link.external_id)) this.store.put('hubOriginalMappings', link.external_id, { subject: link.subject, epoch: link.epoch ?? 1 });
-      const p = this.store.get('people', link.external_id);
-      if (p && p.hubSubject !== link.subject) this.store.put('people', link.external_id, { ...p, hubSubject: link.subject });
-    } }); return result;
+  snapshot(botId) {
+    const ids = botId ? [botId] : this.knownIds();
+    const bots = ids.filter(id => !this.store.get('accounts', id)?.hubPending).map(id => ({
+      id, nickname: this.profile(id).nickname, owner: this.accounts.owner(id),
+      teenMode: this.store.get('teenSettings', id)?.enabled, dailyGames: this.store.get('limits', id)?.maxWerewolfGamesPerDay
+    }));
+    const owner = bots[0]?.owner;
+    const records = botId ? (owner ? [[owner, this.store.get('people', owner)]] : []) : this.store.entries('people');
+    const people = records.filter(([, p]) => p && !p.hubPending).map(([id, p]) => ({
+      id, nickname: p.nickname, email: p.email, password: p.password, aliasOf: p.aliasOf && this.accounts.canonical(id)
+    }));
+    return { people, bots };
+  }
+  async sync(botId) {
+    const { people, bots } = this.snapshot(botId);
+    const peopleById = new Map(people.map(p => [p.id, p]));
+    const batchSize = 256;
+    for (let offset = 0; offset < Math.max(people.length, bots.length); offset += batchSize) {
+      const batchPeople = people.slice(offset, offset + batchSize);
+      const batchBots = bots.slice(offset, offset + batchSize);
+      // The Hub resolves aliases and owners against the people included in this request.
+      const included = new Map(batchPeople.map(p => [p.id, p]));
+      for (const id of [...batchPeople.map(p => p.aliasOf), ...batchBots.map(b => b.owner)]) {
+        if (peopleById.has(id)) included.set(id, peopleById.get(id));
+      }
+      const result = await this.request('/v1/starpost/import', {
+        people: [...included.values()], bots: batchBots, linkScope: 'submitted'
+      });
+      this.store.transaction(() => {
+        for (const link of result.links) {
+          if (!this.store.get('hubOriginalMappings', link.external_id)) this.store.put('hubOriginalMappings', link.external_id, { subject: link.subject, epoch: link.epoch ?? 1 });
+          const p = this.store.get('people', link.external_id);
+          if (p && p.hubSubject !== link.subject) this.store.put('people', link.external_id, { ...p, hubSubject: link.subject });
+        }
+      });
+    }
   }
   async status(externalId) { let s = await this.request('/v1/legacy/status', { externalId }); if (!s.known || !this.store.get('hubOriginalMappings', externalId)) { await this.sync(); s = await this.request('/v1/legacy/status', { externalId }); } if (!s.known || !s.allowed) fail('该账号在 FFA hub 中受限，请到账号中心处理', 403);
     if (s.kind === 'bot' && s.policy) this.store.transaction(() => {

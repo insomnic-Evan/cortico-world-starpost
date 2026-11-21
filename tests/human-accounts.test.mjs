@@ -504,14 +504,17 @@ test('合并旧 H 身份后保留其游戏记录、房间读取与人类封禁�
   }finally{await f.close();}
 });
 
-test('同名搜索可分页取完，不因 20 条旧上限漏人；人类账号不占满额 bot 的注册额度',async()=>{
+test('同名搜索可分页取完，不因 20 条旧上限漏人；已有 2000 个 bot 时人类和 bot 均可注册',async()=>{
   const f=await fixture();try{
     const user=await f.register('search@example.com');
     for(let n=20000;n<20061;n++)f.app.store.put('people',`${n}H`,{humanId:`${n}H`,nickname:'同名用户',email:`u${n}@example.com`,epoch:1});
     const first=await f.rpc(user.accessToken,'social.search',{query:'同名用户'}),second=await f.rpc(user.accessToken,'social.search',{query:'同名用户',offset:50});assert.equal(first.result.items.length,50);assert.equal(second.result.items.length,11);
-    for(let n=10004;n<=12000;n++)f.app.store.put('accounts',String(n),{installationId:randomUUID(),tokenHash:'unused'});
-    assert.equal((await f.post('/register',{installationId:randomUUID(),token:'f'.repeat(64)})).status,409);
-    const still=await f.register('human-after-bot-full@example.com');assert.equal(still.humanId,'10005H');
+    f.app.store.transaction(()=>{
+      for(let n=10004;n<=12000;n++)f.app.store.put('accounts',String(n),{installationId:randomUUID(),tokenHash:'unused'});
+      f.app.store.put('meta','nextBotId',12001);
+    });
+    assert.equal((await f.post('/register',{installationId:randomUUID(),token:'f'.repeat(64)})).result.botId,'12001');
+    const still=await f.register('human-after-many-bots@example.com');assert.equal(still.humanId,'10005H');
   }finally{await f.close();}
 });
 
