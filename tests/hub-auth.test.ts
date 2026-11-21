@@ -92,6 +92,28 @@ test('signed Hub pairing preserves Starpost ID, requires primary, survives resta
   assert.equal((await f.call('/rpc', { action: 'snapshot' }, { authorization: 'Bearer ' + f.key, 'x-starpost-id': '10001' })).status, 200);
 });
 
+test('Hub 配对和直接注册共用最后一个 bot 名额', { skip: !available }, async t => {
+  const f = await fixture(t);
+  f.relay.store.transaction(() => {
+    for (let id = 10002; id < 12000; id++) {
+      f.relay.store.put('accounts', String(id), { installationId: String(id), tokenHash: 'unused' });
+    }
+    f.relay.store.put('meta', 'nextBotId', 12000);
+  });
+  async function pairNew(name: string) {
+    const bot = f.app.hub.createBot(name, f.owner.id).bot.id;
+    const world = f.world(name);
+    await panel(world, 'hubBegin');
+    const pairing = f.approve(name, bot);
+    f.primary(bot, pairing.installationId);
+    return panel(world, 'hubFinish');
+  }
+  assert.equal((await pairNew('last-seat')).botId, '12000');
+  await assert.rejects(pairNew('full'), /目前注册已满/);
+  assert.equal((await f.call('/register', { installationId: '00000000-0000-4000-8000-000000000001', token: 'a'.repeat(64) })).status, 409);
+  assert.equal(f.relay.store.get('meta', 'nextBotId'), 12001);
+});
+
 test('new Hub bot provisions one business account; re-pair and migration do not duplicate it', { skip: !available }, async t => {
   const f = await fixture(t), bot = f.app.hub.createBot('全新 bot', f.owner.id).bot.id, w = f.world('new');
   await panel(w, 'hubBegin'); const p = f.approve('new', bot); f.primary(bot, p.installationId);

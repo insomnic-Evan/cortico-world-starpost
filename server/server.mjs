@@ -35,7 +35,7 @@ import { HumanAccess } from './human-access.mjs';
 import { HubBridge } from './hub-bridge.mjs';
 import { HubSso } from './hub-sso.mjs';
 
-const MAX_ACCOUNTS = 1500;
+const MAX_ACCOUNTS = 2000;
 
 const fail = (message, code = 400) => { const e = new Error(message); e.status = code; throw e; };
 const id = (v) => typeof v === 'string' && /^\d{5,12}$/.test(v) && Number(v) >= 10001 && Number.isSafeInteger(Number(v)) ? v : fail('聊天 ID 须是从 10001 起的数字');
