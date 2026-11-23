@@ -1,6 +1,10 @@
 # 星邮 iOS（无签名测试版）
 
-SwiftUI 原生外壳 + WKWebView 复用星邮移动网页，优先保持现有功能。支持 iPhone / iPad，最低 iOS / iPadOS 17。版本 `0.2.1 (3)`，Bundle ID `io.starpost.ios`。
+SwiftUI 原生外壳 + WKWebView 复用星邮移动网页，优先保持现有功能。支持 iPhone / iPad，最低 iOS / iPadOS 17。版本 `0.2.2 (4)`，Bundle ID `io.starpost.ios`。
+
+## 0.2.2 更新
+
+登录后从右上角星邮菜单进入 FFA 形象工坊，使用 Hub 身份浏览作品。
 
 ## 0.2.1 更新
 
@@ -54,7 +58,7 @@ bash ios/scripts/build-unsigned.sh
 
 脚本依次执行 Swift 核心回归测试、真机 `iphoneos arm64` 编译、Mach-O 平台检查、未签名检查，再将实际 `.app` 打包成 `Payload/Starpost.app` 结构的 IPA，并生成 SHA-256 与构建元信息。不会把模拟器包当成真机 IPA。
 
-输出：`ios/build/distribution/starpost-ios-0.2.1-unsigned.ipa`。GitHub 工作流 `Build unsigned iOS client` 使用`xcode-27` arm64 runner，不需要 Apple 证书。手动运行时 `source_ref` 默认选择 `ios-client` 分支。工作流还会编译模拟器版本，启动 App，保存明暗登录页截图。Actions 产物保留 14 天。
+输出：`ios/build/distribution/starpost-ios-0.2.2-unsigned.ipa`。GitHub 工作流 `Build unsigned iOS client` 使用`xcode-27` arm64 runner，不需要 Apple 证书。手动运行时 `source_ref` 默认选择 `ios-client` 分支。工作流还会编译模拟器版本，启动 App，保存明暗登录页截图。Actions 产物保留 14 天。
 
 在 Xcode 中打开 `ios/Starpost.xcodeproj` 也可构建。若要签名运行，请由操作者自行配置团队和合法签名方式。
 

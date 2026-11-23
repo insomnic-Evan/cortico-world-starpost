@@ -34,6 +34,9 @@ struct RootView: View {
                     if identity.busy { ProgressView().controlSize(.small) }
                     Menu {
                         Button("刷新页面", systemImage: "arrow.clockwise") { reload += 1 }
+                        if let workshop = URL(string: "https://8.148.13.225:8443/?page=figure") {
+                            Link(destination: workshop) { Label("形象工坊", systemImage: "square.grid.2x2") }
+                        }
                         Button("关于 iOS 版", systemImage: "info.circle") { showAbout = true }
                         Button("切换账号／退出", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) { confirmLogout = true }
                     } label: {
