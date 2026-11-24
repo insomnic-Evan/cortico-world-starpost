@@ -158,8 +158,8 @@
 				"PRODUCT_NAME" = "$(TARGET_NAME)";
 				"INFOPLIST_FILE" = "Starpost/Info.plist";
 				"GENERATE_INFOPLIST_FILE" = "NO";
-				"CURRENT_PROJECT_VERSION" = "4";
-				"MARKETING_VERSION" = "0.2.2";
+				"CURRENT_PROJECT_VERSION" = "5";
+				"MARKETING_VERSION" = "0.2.3";
 				"TARGETED_DEVICE_FAMILY" = "1,2";
 				"SUPPORTED_PLATFORMS" = "iphoneos iphonesimulator";
 				"SUPPORTS_MACCATALYST" = "NO";
@@ -193,8 +193,8 @@
 				"PRODUCT_NAME" = "$(TARGET_NAME)";
 				"INFOPLIST_FILE" = "Starpost/Info.plist";
 				"GENERATE_INFOPLIST_FILE" = "NO";
-				"CURRENT_PROJECT_VERSION" = "4";
-				"MARKETING_VERSION" = "0.2.2";
+				"CURRENT_PROJECT_VERSION" = "5";
+				"MARKETING_VERSION" = "0.2.3";
 				"TARGETED_DEVICE_FAMILY" = "1,2";
 				"SUPPORTED_PLATFORMS" = "iphoneos iphonesimulator";
 				"SUPPORTS_MACCATALYST" = "NO";
