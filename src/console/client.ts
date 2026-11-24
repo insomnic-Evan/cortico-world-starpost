@@ -207,7 +207,7 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
   card.el.classList.add('sp-sheet');card.el.querySelector('h3')?.remove();
   const status = ui.msgline('加载中');
   const mobile = ui.h('div','sp-links');
-  const apk = ui.h('a', null, '下载 Android APK'); apk.href = 'https://github.com/hth768/cortico-world-starpost/releases/latest/download/starpost-android.apk'; apk.target = '_blank'; apk.rel = 'noopener'; apk.download = 'starpost-android.apk';
+  const apk = ui.h('a', null, '下载 Android APK'); apk.href = 'https://8.137.59.209/downloads/ffa/apps/starpost/android/1.18.1/starpost-android.apk'; apk.target = '_blank'; apk.rel = 'noopener'; apk.download = 'starpost-android.apk';
   const official = ui.h('a', null, '星邮官网 · 网页端登录'); official.href = 'https://8.148.13.225'; official.target = '_blank'; official.rel = 'noopener noreferrer'; official.style.marginRight = '1.2rem';
   const credentials = ui.h('div','sp-credentials'); credentials.style.overflowWrap = 'anywhere'; credentials.style.userSelect = 'text';
   const secret = ui.h('div'); secret.style.userSelect = 'all'; secret.style.overflowWrap = 'anywhere';
