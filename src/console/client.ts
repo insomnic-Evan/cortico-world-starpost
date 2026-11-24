@@ -210,7 +210,25 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
   const apk = ui.h('a', null, '下载 Android APK'); apk.href = 'https://github.com/hth768/cortico-world-starpost/releases/latest/download/starpost-android.apk'; apk.target = '_blank'; apk.rel = 'noopener'; apk.download = 'starpost-android.apk';
   const official = ui.h('a', null, '星邮官网 · 网页端登录'); official.href = 'https://8.148.13.225'; official.target = '_blank'; official.rel = 'noopener noreferrer'; official.style.marginRight = '1.2rem';
   const credentials = ui.h('div','sp-credentials'); credentials.style.overflowWrap = 'anywhere'; credentials.style.userSelect = 'text';
-  mobile.append(official, apk, credentials);
+  const secret = ui.h('div'); secret.style.userSelect = 'all'; secret.style.overflowWrap = 'anywhere';
+  let accountKey = '', generation = 0;
+  function hideCredential() { generation++; secret.textContent = ''; }
+  const reveal = ui.button('绑定凭据 · 显示并复制', { onClick: async () => {
+    hideCredential(); const request = generation;
+    try {
+      const value = await ctx.invoke<{botId:string; credential:string; expiresAt?:number}>('bindingCredential');
+      if (ctx.signal.aborted || generation !== request) return;
+      secret.textContent = value.credential;
+      let copied = false;
+      try { await navigator.clipboard.writeText(value.credential); copied = true; } catch { /* Selectable text for hosts without clipboard access. */ }
+      if (generation !== request || ctx.signal.aborted) return;
+      status.textContent = (copied ? '已复制' : '请手动复制上方凭据') + (value.expiresAt ? ' · 绑定码十分钟内有效，仅可使用一次' : ' · 原星邮账号凭据');
+      setTimeout(() => { if (request === generation) hideCredential(); }, 60_000);
+    } catch (error) { if (request === generation) status.textContent = String(error); }
+  } });
+  reveal.hidden = true;
+  ctx.signal.addEventListener('abort', hideCredential, { once: true });
+  mobile.append(official, apk, credentials, reveal, secret);
   const hubBox = ui.h('details');
   const hubSummary = ui.h('summary', null, 'FFA hub 登录 · 保留当前账号');
   const hubNote = ui.h('p', null, '由人类打开账号中心，核对短码并选择 bot。已有登录不会自动切换；管理员将本安装设为主运行端后，点击完成登录。');
@@ -639,9 +657,12 @@ const bundle: WebUiClientBundle = { panels: { viewer: { mount(ctx) {
       const identity = await ctx.invoke<{ registered: boolean; botId: string | null; recoveryHint?: string }>('status');
       try {
         const info = await ctx.invoke<{ botId: string; credential: string; authMode?: string; hubUrl?: string }>('mobileLoginInfo');
-        credentials.textContent = info.authMode === 'hub' ? `星邮 ID：${info.botId}\n通过 FFA hub 登录，安装凭据仅保存在本机。管理员与主运行端请到 ${info.hubUrl} 管理。` : info.botId ? `绑定 Bot ID：${info.botId}\n凭据：${info.credential}\n手机和网页端使用邮箱登录，再在设置中绑定此 bot。` : '注册后在此显示绑定 bot 所需的 ID 和凭据';
+        const key = info.botId + ':' + info.authMode;
+        if (key !== accountKey) { hideCredential(); accountKey = key; }
+        reveal.hidden = !info.botId;
+        credentials.textContent = info.botId ? '星邮 Bot ID：' + info.botId + (info.authMode === 'hub' ? ' · FFA Hub 配对' : ' · 本机凭据登录') : '登录后可查看绑定凭据';
         credentials.style.whiteSpace = 'pre-wrap';
-      } catch { credentials.textContent = ''; }
+      } catch { credentials.textContent = ''; reveal.hidden = true; hideCredential(); }
       if (!identity.registered) { showRegistration(); status.textContent = identity.recoveryHint || '可注册新账号或恢复已有账号'; return; }
       await refreshSafety();
       showSearch();

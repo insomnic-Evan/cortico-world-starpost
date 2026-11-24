@@ -183,8 +183,9 @@ test('手机消息立即唤醒并合批积压、重置计时，来图自动收�
     assert.equal(typeof stats, 'string', stats?.text);
     assert.equal(JSON.parse(String(stats)).total, 1);
     const panel = world.webUi(); const info: any = await panel.invoke!('viewer', 'mobileLoginInfo', []);
-    assert.equal(info.botId, '10001'); assert.equal(info.credential, f.keys[10001]);
-    assert.ok(panel.config?.[0].schema.description?.includes(f.keys[10001]));
+    assert.equal(info.botId, '10001'); assert.equal(info.credential, '');
+    assert.equal((await panel.invoke!('viewer', 'bindingCredential', []) as any).credential, f.keys[10001]);
+    assert.ok(!panel.config?.[0].schema.description?.includes(f.keys[10001]));
     assert.equal(events.some(event => event.text?.includes(f.keys[10001])), false);
   } finally { await world.stop(); await f.close(); }
 });
