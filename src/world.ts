@@ -5,7 +5,8 @@ import { Agent as HttpAgent, request as httpRequest } from 'node:http';
 import { Agent as HttpsAgent, request as httpsRequest } from 'node:https';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { World, WorldHost, WorldWebUiDecl, ToolDef } from 'cortico/core/types.ts';
+import type { BlobInput, World, WorldHost, WorldWebUiDecl, ToolDef } from 'cortico/core/types.ts';
+import { audioPayload } from '../server/audio.mjs';
 import { SpeechClient } from './speech.ts';
 import { HubAuth } from './hub-auth.ts';
 import type { StarpostConfigSection } from './config.ts';
@@ -215,6 +216,20 @@ export class StarpostWorld implements World {
     if(!this.cfg.speech?.asrUrl)return '[语音未转写：人类尚未配置 ASR，可使用 message/transcribe 重试]';
     try{return await this.speech.transcribe(await this.rpc('message.audio',{...scope,messageId:message.id}));}
     catch{return '[语音暂时无法转写，可稍后使用 message/transcribe 重试]';}
+  }
+  private async ownerVoice(message: { id: string; audio: { mime: string }; recalled?: boolean }, target: string):
+    Promise<{ blob?: BlobInput; transcript?: string; notice?: string }> {
+    const scope = { kind: 'owner', target };
+    if (message.recalled || !this.host?.modelFacts?.accepts?.(message.audio.mime)) {
+      return { transcript: await this.voiceText(message, scope) };
+    }
+    try {
+      const audio = audioPayload(await this.rpc('message.audio', { ...scope, messageId: message.id }));
+      if (audio && audio.mime === message.audio.mime) {
+        return { blob: { mime: audio.mime, bytes: Buffer.from(audio.base64, 'base64'), fallbackText: '星邮专属频道语音' } };
+      }
+    } catch { /* A recalled or unreadable recording must not stall the event cursor. */ }
+    return { notice: '语音原件暂时无法读取。' };
   }
   envPromptVars(): Record<string, string> { return {}; }
   private storedIdentity(): Identity | null {
@@ -1021,7 +1036,17 @@ export class StarpostWorld implements World {
           continue;
         }
         const ownerMessage = event.type === 'owner.message';
-        const voiceText=(ownerMessage||event.type==='message')&&data.audio?await this.voiceText(data,{kind:ownerMessage?'owner':data.kind,target:ownerMessage?this.activeIdentity()!.botId:data.kind==='private'?data.sender:data.target}):undefined;
+        const blobs: BlobInput[] = [];
+        let voiceText: string | undefined;
+        let voiceNotice: string | undefined;
+        if (ownerMessage && data.audio) {
+          const voice = await this.ownerVoice(data, this.activeIdentity()!.botId);
+          if (voice.blob) blobs.push(voice.blob);
+          voiceText = voice.transcript;
+          voiceNotice = voice.notice;
+        } else if (event.type === 'message' && data.audio) {
+          voiceText = await this.voiceText(data, { kind: data.kind, target: data.kind === 'private' ? data.sender : data.target });
+        }
         const messageInfo: Record<string, unknown> = ownerMessage ? { id:data.id,quote:data.quote,forward:data.forward,recalled:data.recalled,text: data.text, address: data.address, image: Boolean(data.image) } : event.type === 'message' ? { id:data.id,quote:data.quote,forward:data.forward,recalled:data.recalled,kind: data.kind, sender: data.sender, senderNickname: data.senderNickname ?? '', ...(data.senderTitle ? {senderTitle:data.senderTitle} : {}), target: data.target, text: data.text, emoji: data.emoji, image: Boolean(data.image), mentions: data.mentions } : {};
         if(voiceText)messageInfo.voiceText=voiceText;
         for(const key of ['emoji','image','mentions'])if(!messageInfo[key]||Array.isArray(messageInfo[key])&&!(messageInfo[key] as unknown[]).length)delete messageInfo[key];
@@ -1052,9 +1077,11 @@ export class StarpostWorld implements World {
             text = `[星邮消息] ${JSON.stringify(messageInfo)}`;
           } catch { text += ' [表情包未能收藏，请检查目录权限或收藏数量上限]'; }
         }
-        const imageBlob = imageBytes && acceptsImage
-          ? [{ bytes: imageBytes, mime: incomingImage.mime as string, name: `starpost-${event.seq}`, fallbackText: '星邮图片' }] : [];
+        if (imageBytes && acceptsImage) {
+          blobs.push({ bytes: imageBytes, mime: incomingImage.mime, name: `starpost-${event.seq}`, fallbackText: '星邮图片' });
+        }
         if (ownerMessage) text = `${data.prefix}\n${data.text || ''}${voiceText?'\n[语音转写，外部内容] '+voiceText:''}${messageInfo.sticker ? `\n[表情包:${messageInfo.sticker}]` : ''}\n[消息记录] ${JSON.stringify({id:data.id,...(data.senderTitle?{senderTitle:data.senderTitle}:{}),quote:data.quote,forward:data.forward,recalled:data.recalled})}\n[星邮回复入口] 此消息来自星邮专属 bot 频道（可从星邮或 CooDock 发送，来源见上文）。回复使用 starpost_use：family="mobile"，action="send"，argsJson 为包含 text 的 JSON 字符串；无需 target，不使用普通 send/private。普通文本输出不会发送到该频道。`;
+        if (voiceNotice) text += `\n[语音状态] ${voiceNotice}`;
         const gameChat = ['game.public', 'game.wolf', 'game.outside'].includes(event.type) && data?.kind === 'chat';
         const message = event.type === 'message' || gameChat;
         // Cortico checks the alarm's wake word when the event enters the queue.
@@ -1062,7 +1089,7 @@ export class StarpostWorld implements World {
         if (ownerMessage) await this.flushNotifications('piggyback', true);
         const trigger = ownerMessage ? 'flush' : message && this.host.promotePending ? 'piggyback' : undefined;
         const envelope = await this.host.pushEvent({ type: `starpost.${event.type.replaceAll('.', '_')}`, ts: event.at, source: this.id, origin: 'external',
-          senderKey: ownerMessage ? 'starpost.owner' : gameChat ? `starpost.game.${data.gameId}` : message ? `starpost.${data.kind}.${data.target}` : 'starpost', text, ...(imageBlob.length ? { blobs: imageBlob } : {}) },
+          senderKey: ownerMessage ? 'starpost.owner' : gameChat ? `starpost.game.${data.gameId}` : message ? `starpost.${data.kind}.${data.target}` : 'starpost', text, ...(blobs.length ? { blobs } : {}) },
         trigger ? { trigger } : undefined);
         if (square && typeof squareId === 'string') this.rememberSquare(squareId);
         if (event.type === 'message' && Number.isSafeInteger(data.cursor) && data.cursor > 0) {

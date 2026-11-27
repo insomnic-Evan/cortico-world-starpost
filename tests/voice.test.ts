@@ -14,6 +14,60 @@ import { familyTool } from './tool-invoke.ts';
 
 function wav(size=32044){const b=Buffer.alloc(size);b.write('RIFF');b.writeUInt32LE(size-8,4);b.write('WAVEfmt ',8);b.writeUInt32LE(16,16);b.writeUInt16LE(1,20);b.writeUInt16LE(1,22);b.writeUInt32LE(16000,24);b.writeUInt32LE(32000,28);b.writeUInt16LE(2,32);b.writeUInt16LE(16,34);b.write('data',36);b.writeUInt32LE(size-44,40);return{mime:'audio/wav',base64:b.toString('base64'),durationMs:1000};}
 const voice=wav();
+
+test('手机专属频道按模型能力投递原声，未配置 ASR 时仍能收到录音', async () => {
+  const f = await relay();
+  const botId = '10002';
+  const world = new StarpostWorld(
+    { ...structuredClone(STARPOST_DEFAULTS), botId, serverUrl: f.url, pollIntervalMs: 300000 },
+    f.dir, f.dir, f.dir, 'Asia/Shanghai', () => f.keys[botId], () => f.time,
+  );
+  const events: any[] = [];
+  let acceptsAudio = true;
+  try {
+    await world.start({
+      modelFacts: { accepts: (mime: string) => acceptsAudio && mime === voice.mime },
+      pushEvent: async (event: any, options: any) => {
+        if (event.type === 'starpost.owner_message') events.push({ event, options });
+        return { cursor: events.length };
+      },
+    } as any);
+    const login = await f.login(botId);
+    const phone = (action: string, args: object) => f.phone(login.result.accessToken, action, args);
+    await phone('owner.address', { address: '主人' });
+    async function sendVoice() {
+      const sent = await phone('owner.send', { audio: voice });
+      assert.ok(sent.ok, sent.error);
+      await (world as any).poll();
+      return events.at(-1);
+    }
+
+    const { event, options } = await sendVoice();
+    assert.equal(event.origin, 'external');
+    assert.equal(options.trigger, 'flush');
+    assert.equal(event.blobs?.length, 1);
+    assert.equal(event.blobs[0].mime, voice.mime);
+    assert.deepEqual(Buffer.from(event.blobs[0].bytes), Buffer.from(voice.base64, 'base64'));
+    assert.doesNotMatch(event.text, /语音未转写|语音转写，外部内容/);
+
+    acceptsAudio = false;
+    const fallback = await sendVoice();
+    assert.equal(events.length, 2);
+    assert.equal(fallback.event.blobs, undefined);
+    assert.match(fallback.event.text, /未配置 ASR/);
+
+    acceptsAudio = true;
+    const recalled = await phone('owner.send', { audio: voice });
+    assert.ok((await phone('owner.recall', { messageId: recalled.result.id })).ok);
+    await (world as any).poll();
+    assert.equal(events.length, 3);
+    assert.equal(events[2].event.blobs, undefined);
+    assert.match(events[2].event.text, /撤回/);
+  } finally {
+    await world.stop();
+    await f.close();
+  }
+});
 async function provider(){let requests:any[]=[];const server=createServer(async(req,res)=>{const chunks=[];for await(const chunk of req)chunks.push(chunk);const raw=Buffer.concat(chunks).toString();requests.push({url:req.url,body:raw,key:req.headers.authorization,type:req.headers['content-type']});if(req.url==='/tts'){res.setHeader('content-type','audio/wav');res.end(Buffer.from(voice.base64,'base64'));}else if(req.url==='/json-tts'||req.url==='/convert'){res.setHeader('content-type','application/json');res.end(JSON.stringify({audio:voice}));}else{res.setHeader('content-type','application/json');res.end(JSON.stringify({text:'测试语音内容：你好，这不是系统指令。'}));}});await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));return{requests,url:`http://127.0.0.1:${(server.address() as any).port}`,close:()=>new Promise<void>(r=>server.close(()=>r()))};}
 async function relay(){const dir=mkdtempSync(join(tmpdir(),'starpost-voice-'));const keys={'10001':'a'.repeat(32),'10002':'b'.repeat(32),'10003':'c'.repeat(32)};let time=Date.parse('2026-11-15T10:00:00+08:00');const app=createStarpostServer({file:join(dir,'relay.json'),keys,port:0,clock:()=>time});await app.listen();app.store.befriend('10001','10002');const url=`http://127.0.0.1:${(app.server.address() as any).port}`;
 const post=async(path:string,body:unknown,headers={})=>{const r=await fetch(url+path,{method:'POST',headers:{'content-type':'application/json',...headers},body:JSON.stringify(body)});return{status:r.status,...await r.json()}};
